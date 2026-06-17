@@ -333,7 +333,7 @@ export default function ClientsPage() {
 
   function inboundLabel(id: number) {
     const ib = inboundsById[id];
-    return formatInboundLabel(ib?.tag, ib?.remark);
+    return formatInboundLabel(ib?.tag, ib?.remark, ib?.port);
   }
 
   function inboundNodeLabel(id: number) {
@@ -733,7 +733,7 @@ export default function ClientsPage() {
     {
       title: t('pages.clients.attachedInbounds'),
       key: 'inboundIds',
-      width: 170,
+      width: 210,
       render: (_v, record) => {
         const ids = record.inboundIds || [];
         if (ids.length === 0) return <span style={{ color: 'rgba(0,0,0,0.45)' }}>—</span>;
@@ -743,7 +743,7 @@ export default function ClientsPage() {
           const ib = inboundsById[id];
           const proto = (ib?.protocol || '').toLowerCase();
           const color = INBOUND_PROTOCOL_COLORS[proto] ?? 'default';
-          const compactLabel = formatInboundLabel(ib?.tag, ib?.remark);
+          const compactLabel = formatInboundLabel(ib?.tag, ib?.remark, ib?.port);
           const nodeLabel = inboundNodeLabel(id);
           return (
             <Tooltip key={id} title={inboundFullLabel(id)}>
