@@ -328,6 +328,11 @@ export default function ClientsPage() {
     for (const ib of inbounds) out[ib.id] = ib;
     return out;
   }, [inbounds]);
+  const nodesById = useMemo(() => {
+    const out = new Map<number, (typeof nodes)[number]>();
+    for (const node of nodes || []) out.set(node.id, node);
+    return out;
+  }, [nodes]);
 
   const protocolOptions = useMemo(() => {
     const values = new Set<string>((inbounds || []).map((i) => i.protocol).filter((x): x is string => !!x));
@@ -344,7 +349,22 @@ export default function ClientsPage() {
 
   function inboundLabel(id: number) {
     const ib = inboundsById[id];
-    return formatInboundLabel(ib?.tag, ib?.remark);
+    return formatInboundLabel(ib?.tag, ib?.remark, ib?.port);
+  }
+
+  function inboundNodeLabel(id: number) {
+    const ib = inboundsById[id];
+    if (!ib) return '';
+    if (ib.nodeId == null) return t('pages.clients.filters.localPanel');
+    const node = nodesById.get(ib.nodeId);
+    return (node?.remark || node?.name || node?.address || `#${ib.nodeId}`).trim();
+  }
+
+  function inboundFullLabel(id: number) {
+    const nodeLabel = inboundNodeLabel(id);
+    const label = inboundLabel(id);
+    if (!nodeLabel) return label;
+    return label ? `${nodeLabel} / ${label}` : nodeLabel;
   }
 
   const clientBucket = useCallback((row: ClientRecord | null | undefined): Bucket | null => {
@@ -813,7 +833,7 @@ export default function ClientsPage() {
     {
       title: t('pages.clients.attachedInbounds'),
       key: 'inboundIds',
-      width: 170,
+      width: 210,
       render: (_v, record) => {
         const ids = record.inboundIds || [];
         if (ids.length === 0) return <span style={{ color: 'rgba(0,0,0,0.45)' }}>—</span>;
@@ -823,11 +843,13 @@ export default function ClientsPage() {
           const ib = inboundsById[id];
           const proto = (ib?.protocol || '').toLowerCase();
           const color = INBOUND_PROTOCOL_COLORS[proto] ?? 'default';
-          const compactLabel = formatInboundLabel(ib?.tag, ib?.remark);
+          const compactLabel = formatInboundLabel(ib?.tag, ib?.remark, ib?.port);
+          const nodeLabel = inboundNodeLabel(id);
           return (
-            <Tooltip key={id} title={inboundLabel(id)}>
-              <Tag color={color} style={{ margin: 2 }}>
-                {compact ? compactLabel : inboundLabel(id)}
+            <Tooltip key={id} title={inboundFullLabel(id)}>
+              <Tag color={color} className="client-inbound-chip">
+                {nodeLabel && <span className="client-inbound-node">{nodeLabel}</span>}
+                <span className="client-inbound-name">{compact ? compactLabel : inboundLabel(id)}</span>
               </Tag>
             </Tooltip>
           );
@@ -885,7 +907,7 @@ export default function ClientsPage() {
       ),
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [t, togglingEmail, clientBucket, isOnline, inboundsById, filters, allGroups, datepicker, trafficDiff]);
+  ], [t, togglingEmail, clientBucket, isOnline, inboundsById, nodesById, filters, allGroups, datepicker, trafficDiff]);
 
   const tablePagination = {
     current: currentPage,
