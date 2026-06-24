@@ -55,7 +55,7 @@ var defaultValueMap = map[string]string{
 	"pageSize":                    "25",
 	"expireDiff":                  "0",
 	"trafficDiff":                 "0",
-	"remarkTemplate":              "{{INBOUND}}|📊{{TRAFFIC_LEFT}}|⏳{{DAYS_LEFT}}D",
+	"remarkTemplate":              "{{INBOUND}}-{{EMAIL}}",
 	"timeLocation":                "Local",
 	"tgBotEnable":                 "false",
 	"tgBotToken":                  "",

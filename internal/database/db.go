@@ -106,6 +106,9 @@ func initModels() error {
 	if err := normalizeInboundSubSortIndex(); err != nil {
 		return err
 	}
+	if err := migrateRemarkTemplateDefault(); err != nil {
+		return err
+	}
 	if IsPostgres() {
 		if err := resyncPostgresSequences(db, models); err != nil {
 			log.Printf("Error resyncing postgres sequences: %v", err)
@@ -159,6 +162,17 @@ func migrateHostVerifyPeerCertByNameColumn() error {
 	// integer/null value so it doesn't read back as "0"/"1". After conversion
 	// every value is text, so re-running touches nothing.
 	return db.Exec(`UPDATE hosts SET verify_peer_cert_by_name = '' WHERE verify_peer_cert_by_name IS NULL OR typeof(verify_peer_cert_by_name) <> 'text'`).Error
+}
+
+// migrateRemarkTemplateDefault restores this fork's expected subscription
+// display names for panels that were already started on official v3.4.0. Only
+// the exact official default is rewritten; custom operator templates are kept.
+func migrateRemarkTemplateDefault() error {
+	const officialV340Default = "{{INBOUND}}|📊{{TRAFFIC_LEFT}}|⏳{{DAYS_LEFT}}D"
+	const fourgetuDefault = "{{INBOUND}}-{{EMAIL}}"
+	return db.Model(&model.Setting{}).
+		Where("key = ? AND value = ?", "remarkTemplate", officialV340Default).
+		Update("value", fourgetuDefault).Error
 }
 
 // seedHostsFromExternalProxy is a one-time, self-gated migration that creates a

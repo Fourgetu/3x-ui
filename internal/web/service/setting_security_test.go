@@ -92,6 +92,19 @@ func TestUpdateAllSettingPreservesRedactedSecrets(t *testing.T) {
 	}
 }
 
+func TestDefaultRemarkTemplateIncludesClientEmail(t *testing.T) {
+	setupSettingTestDB(t)
+	s := &SettingService{}
+
+	got, err := s.GetRemarkTemplate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "{{INBOUND}}-{{EMAIL}}" {
+		t.Fatalf("remarkTemplate = %q, want {{INBOUND}}-{{EMAIL}}", got)
+	}
+}
+
 func TestSanitizePublicHTTPURLBlocksPrivateAddressUnlessAllowed(t *testing.T) {
 	if _, err := SanitizePublicHTTPURL("http://127.0.0.1:8080/hook", false); err == nil {
 		t.Fatal("expected localhost URL to be blocked")
