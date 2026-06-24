@@ -344,9 +344,9 @@ export default function ClientFormModal({
     () => (inbounds || [])
       .filter((ib) => MULTI_CLIENT_PROTOCOLS.has(ib.protocol || ''))
       .map((ib) => ({
-        label: formatInboundLabel(ib.tag, ib.remark),
+        label: formatInboundLabel(ib.tag, ib.remark, ib.port),
         value: ib.id,
-        title: formatInboundLabel(ib.tag, ib.remark),
+        title: formatInboundLabel(ib.tag, ib.remark, ib.port),
       })),
     [inbounds],
   );
