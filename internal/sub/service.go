@@ -41,6 +41,7 @@ type SubService struct {
 	// has already been emitted this request, so it appears on the first body
 	// link only. Per-request state; reset in PrepareForRequest.
 	usageShown     map[string]bool
+	remarkCounts   map[string]int
 	inboundService service.InboundService
 	settingService service.SettingService
 	// nodesByID is populated per request from the Node table so
@@ -85,6 +86,7 @@ func (s *SubService) PrepareForRequest(host string) {
 	}
 	s.address = host
 	s.usageShown = map[string]bool{}
+	s.remarkCounts = map[string]int{}
 	s.statsByEmail = map[string]xray.ClientTraffic{}
 	s.loadNodes()
 	s.loadRemarkSettings()
@@ -1727,7 +1729,7 @@ func (s *SubService) genRemark(inbound *model.Inbound, email string, extra strin
 	if s.remarkTemplate != "" {
 		return s.genTemplatedRemark(inbound, s.lookupClient(inbound, email), extra, transport)
 	}
-	return fallbackRemark(inbound.Remark, extra, email)
+	return s.uniqueBodyRemark(fallbackRemark(inbound.Remark, extra, email))
 }
 
 func fallbackRemark(parts ...string) string {
