@@ -657,11 +657,11 @@ func TestRepeatedBodyRemarksGetNumericSuffix(t *testing.T) {
 	if first != "日本-ZouJP" {
 		t.Fatalf("first remark = %q, want 日本-ZouJP", first)
 	}
-	if second != "日本-ZouJP 2" {
-		t.Fatalf("second remark = %q, want 日本-ZouJP 2", second)
+	if second != "日本-ZouJP-2" {
+		t.Fatalf("second remark = %q, want 日本-ZouJP-2", second)
 	}
-	if third != "日本-ZouJP 3" {
-		t.Fatalf("third remark = %q, want 日本-ZouJP 3", third)
+	if third != "日本-ZouJP-3" {
+		t.Fatalf("third remark = %q, want 日本-ZouJP-3", third)
 	}
 }
 
@@ -680,8 +680,8 @@ func TestRepeatedTemplatedBodyRemarksGetNumericSuffix(t *testing.T) {
 	if first != "日本-ZouJP" {
 		t.Fatalf("first templated remark = %q, want 日本-ZouJP", first)
 	}
-	if second != "日本-ZouJP 2" {
-		t.Fatalf("second templated remark = %q, want 日本-ZouJP 2", second)
+	if second != "日本-ZouJP-2" {
+		t.Fatalf("second templated remark = %q, want 日本-ZouJP-2", second)
 	}
 }
 
