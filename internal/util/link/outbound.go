@@ -8,10 +8,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"math"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Outbound is the minimal shape we emit for each parsed link.
@@ -155,9 +158,8 @@ func parseVmess(link string) (*ParseResult, error) {
 	// Map known fields (best effort, matching frontend parser coverage)
 	switch network {
 	case "ws":
-		if host, ok := j["host"].(string); ok {
-			setWS(stream, host, getString(j, "path", "/"))
-		}
+		host, _ := j["host"].(string)
+		setWS(stream, host, getString(j, "path", "/"))
 	case "grpc":
 		svc := getString(j, "path", "")
 		if auth, ok := j["authority"].(string); ok && auth != "" {
@@ -206,6 +208,10 @@ func parseVmess(link string) (*ParseResult, error) {
 	}
 
 	port := num(j["port"])
+	scy := getString(j, "scy", "auto")
+	if scy == "none" || scy == "zero" {
+		scy = "auto"
+	}
 	ob := Outbound{
 		"protocol": "vmess",
 		"tag":      getString(j, "ps", ""),
@@ -217,7 +223,7 @@ func parseVmess(link string) (*ParseResult, error) {
 					"users": []any{
 						map[string]any{
 							"id":       getString(j, "id", ""),
-							"security": getString(j, "scy", "auto"),
+							"security": scy,
 						},
 					},
 				},
@@ -336,12 +342,15 @@ func parseShadowsocks(link string) (*ParseResult, error) {
 		remark, _ = url.QueryUnescape(link[i+1:])
 		link = link[:i]
 	}
+	if i := strings.Index(link, "?"); i >= 0 {
+		link = link[:i]
+	}
 	core := strings.TrimPrefix(link, "ss://")
 	at := strings.Index(core, "@")
 	if at >= 0 {
 		// modern
 		userB64 := core[:at]
-		hp := core[at+1:]
+		hp := strings.TrimRight(core[at+1:], "/")
 		userInfo, err := base64DecodeFlexible(userB64)
 		if err != nil {
 			// SIP022 (2022-blake3-*) userinfo is percent-encoded, not base64.
@@ -356,7 +365,10 @@ func parseShadowsocks(link string) (*ParseResult, error) {
 			return nil, fmt.Errorf("bad ss host:port")
 		}
 		host := hp[:colon]
-		port, _ := strconv.Atoi(hp[colon+1:])
+		port, err := strconv.Atoi(hp[colon+1:])
+		if err != nil {
+			return nil, fmt.Errorf("bad ss port %q: %w", hp[colon+1:], err)
+		}
 		method, pass := splitMethodPass(userInfo)
 		identity := "ss:" + method + ":" + pass + "@" + host + ":" + strconv.Itoa(port)
 		ob := Outbound{
@@ -386,7 +398,10 @@ func parseShadowsocks(link string) (*ParseResult, error) {
 		return nil, fmt.Errorf("bad legacy ss hp")
 	}
 	host := hp[:colon]
-	port, _ := strconv.Atoi(hp[colon+1:])
+	port, err := strconv.Atoi(hp[colon+1:])
+	if err != nil {
+		return nil, fmt.Errorf("bad legacy ss port %q: %w", hp[colon+1:], err)
+	}
 	method, pass := splitMethodPass(userInfo)
 	identity := "ss:" + method + ":" + pass + "@" + host + ":" + strconv.Itoa(port)
 	ob := Outbound{
@@ -437,7 +452,7 @@ func parseHysteria2(link string) (*ParseResult, error) {
 			"alpn":                 splitCommaOrDefault(params.Get("alpn"), []string{"h3"}),
 			"fingerprint":          params.Get("fp"),
 			"echConfigList":        params.Get("ech"),
-			"verifyPeerCertByName": "",
+			"verifyPeerCertByName": params.Get("vcn"),
 			"pinnedPeerCertSha256": params.Get("pinSHA256"),
 		},
 	}
@@ -607,7 +622,15 @@ func applyTransport(stream map[string]any, p url.Values) {
 		if m := p.Get("mode"); m != "" {
 			xh["mode"] = m
 		}
-		// A few advanced xhttp fields that are commonly carried
+		if v := p.Get("x_padding_bytes"); v != "" {
+			xh["xPaddingBytes"] = v
+		}
+		if extra := p.Get("extra"); extra != "" {
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(extra), &parsed); err == nil {
+				maps.Copy(xh, parsed)
+			}
+		}
 		for _, k := range []string{"xPaddingBytes", "scMaxEachPostBytes", "scMinPostsIntervalMs", "uplinkChunkSize"} {
 			if v := p.Get(k); v != "" {
 				xh[k] = v
@@ -657,9 +680,89 @@ func applyFinalMask(stream map[string]any, p url.Values) {
 	if fm := p.Get("fm"); fm != "" {
 		var parsed any
 		if json.Unmarshal([]byte(fm), &parsed) == nil {
+			sanitizeFinalMaskQuicParams(parsed)
 			stream["finalmask"] = parsed
 		}
 	}
+}
+
+// sanitizeFinalMaskQuicParams coerces the strictly numeric quicParams fields
+// of a finalmask blob taken verbatim from a share link's fm= parameter.
+// Xray-core rejects the whole config at startup when e.g. keepAlivePeriod
+// arrives as a duration string like "10s" or an out-of-range integer, so
+// numeric strings are parsed, duration strings are converted to whole
+// seconds, the ranged fields are clamped to what xray accepts, and anything
+// non-finite, negative, absurdly large, or unparseable is dropped so a bad
+// value falls back to xray's default instead of killing the config (#5783).
+func sanitizeFinalMaskQuicParams(parsed any) {
+	fm, ok := parsed.(map[string]any)
+	if !ok {
+		return
+	}
+	qp, ok := fm["quicParams"].(map[string]any)
+	if !ok {
+		return
+	}
+	numericKeys := []string{
+		"initStreamReceiveWindow", "maxStreamReceiveWindow",
+		"initConnectionReceiveWindow", "maxConnectionReceiveWindow",
+		"maxIdleTimeout", "keepAlivePeriod", "maxIncomingStreams",
+	}
+	for _, key := range numericKeys {
+		raw, exists := qp[key]
+		if !exists {
+			continue
+		}
+		n, ok := coerceQuicNumeric(raw)
+		if ok {
+			n, ok = clampQuicNumeric(key, n)
+		}
+		if !ok {
+			delete(qp, key)
+			continue
+		}
+		qp[key] = int64(n)
+	}
+}
+
+func coerceQuicNumeric(raw any) (float64, bool) {
+	switch v := raw.(type) {
+	case float64:
+		return math.Trunc(v), true
+	case string:
+		if n, err := strconv.ParseFloat(v, 64); err == nil && !math.IsInf(n, 0) && !math.IsNaN(n) {
+			return math.Trunc(n), true
+		}
+		if d, err := time.ParseDuration(v); err == nil {
+			return math.Trunc(d.Seconds()), true
+		}
+	}
+	return 0, false
+}
+
+// clampQuicNumeric enforces xray-core's QuicParamsConfig validation so a
+// coerced value cannot still fail the config load: keepAlivePeriod is 0 or
+// 2-60, maxIdleTimeout is 0 or 4-120, maxIncomingStreams is 0 or >= 8.
+// quicNumericMax keeps values in plain-integer JSON territory and far below
+// the uint64 window fields' range.
+const quicNumericMax = float64(1e15)
+
+func clampQuicNumeric(key string, n float64) (float64, bool) {
+	if n < 0 || n > quicNumericMax {
+		return 0, false
+	}
+	if n == 0 {
+		return 0, true
+	}
+	switch key {
+	case "keepAlivePeriod":
+		return math.Min(math.Max(n, 2), 60), true
+	case "maxIdleTimeout":
+		return math.Min(math.Max(n, 4), 120), true
+	case "maxIncomingStreams":
+		return math.Max(n, 8), true
+	}
+	return n, true
 }
 
 func firstNonEmpty(a, b string) string {

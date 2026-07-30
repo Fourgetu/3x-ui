@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -18,7 +19,7 @@ func (s *InboundService) disableInvalidInbounds(tx *gorm.DB) (bool, int64, error
 	now := time.Now().Unix() * 1000
 	needRestart := false
 
-	if p != nil {
+	if process := currentXrayProcess(); process != nil {
 		var tags []string
 		err := tx.Table("inbounds").
 			Select("inbounds.tag").
@@ -27,7 +28,7 @@ func (s *InboundService) disableInvalidInbounds(tx *gorm.DB) (bool, int64, error
 		if err != nil {
 			return false, 0, err
 		}
-		_ = s.xrayApi.Init(p.GetAPIPort())
+		_ = s.xrayApi.Init(process.GetAPIPort())
 		for _, tag := range tags {
 			err1 := s.xrayApi.DelInbound(tag)
 			if err1 == nil {
@@ -48,52 +49,64 @@ func (s *InboundService) disableInvalidInbounds(tx *gorm.DB) (bool, int64, error
 	return needRestart, count, err
 }
 
+const globalTrafficFreshWindow = 24 * time.Hour
+
+func globalTrafficFreshSince() int64 {
+	return time.Now().Add(-globalTrafficFreshWindow).UnixMilli()
+}
+
 // depletedClientsCond matches clients that exhausted their quota or expired.
 // Besides the local counters it also trips on the cross-panel usage a master
 // pushed into client_global_traffics — that's what lets a node cut a client
-// whose combined usage exceeds the quota even though the local share doesn't
-// (placeholders: now).
+// whose combined usage exceeds the quota even though the local share doesn't.
+// Only rows a master refreshed recently count (placeholders: now, freshSince).
 const depletedClientsCond = `((total > 0 AND up + down >= total)
 	OR (expiry_time > 0 AND expiry_time <= ?)
 	OR (total > 0 AND EXISTS (
 		SELECT 1 FROM client_global_traffics g
-		WHERE g.email = client_traffics.email AND g.up + g.down >= client_traffics.total
+		WHERE g.email = client_traffics.email
+			AND g.updated_at >= ?
+			AND g.up + g.down >= client_traffics.total
 	)))`
 
 // depletedClientsCondLocal is depletedClientsCond without the cross-panel
 // client_global_traffics check. The EXISTS branch is a correlated subquery that
 // turns every traffic poll into a full client_traffics scan; on a panel no
 // master pushes to (the common case) client_global_traffics is empty, so the
-// branch can never match and is pure CPU cost (#5392).
+// branch can never match and is pure CPU cost (#5392). Placeholders: now.
 const depletedClientsCondLocal = `((total > 0 AND up + down >= total)
 	OR (expiry_time > 0 AND expiry_time <= ?))`
 
-// depletedCond returns the local-only predicate unless this panel actually
-// holds global-traffic rows, in which case the cross-panel EXISTS check is
-// needed to enforce combined quota. Both variants take the same single
-// expiry_time placeholder, so callers pass identical args either way.
-func depletedCond(tx *gorm.DB) string {
+// depletedCond returns the predicate matching depleted clients together with
+// the arguments it binds. The local-only variant is used unless this panel
+// holds a global-traffic row a master still refreshes, in which case the
+// cross-panel EXISTS check is needed to enforce combined quota.
+func depletedCond(tx *gorm.DB) (string, []any) {
+	now := time.Now().UnixMilli()
+	freshSince := globalTrafficFreshSince()
 	var probe int64
-	if err := tx.Model(&model.ClientGlobalTraffic{}).Limit(1).Count(&probe).Error; err == nil && probe > 0 {
-		return depletedClientsCond
+	err := tx.Model(&model.ClientGlobalTraffic{}).
+		Where("updated_at >= ?", freshSince).
+		Limit(1).Count(&probe).Error
+	if err == nil && probe > 0 {
+		return depletedClientsCond, []any{now, freshSince}
 	}
-	return depletedClientsCondLocal
+	return depletedClientsCondLocal, []any{now}
 }
 
-func (s *InboundService) disableInvalidClients(tx *gorm.DB) (bool, int64, []int, error) {
-	now := time.Now().Unix() * 1000
+func (s *InboundService) disableInvalidClients(tx *gorm.DB) (bool, int64, error) {
 	needRestart := false
-	cond := depletedCond(tx)
+	cond, condArgs := depletedCond(tx)
 
 	var depletedRows []xray.ClientTraffic
 	err := tx.Model(xray.ClientTraffic{}).
-		Where(cond+" AND enable = ?", now, true).
+		Where(cond+" AND enable = ?", append(condArgs, true)...).
 		Find(&depletedRows).Error
 	if err != nil {
-		return false, 0, nil, err
+		return false, 0, err
 	}
 	if len(depletedRows) == 0 {
-		return false, 0, nil, nil
+		return false, 0, nil
 	}
 
 	depletedEmails := make([]string, 0, len(depletedRows))
@@ -121,7 +134,7 @@ func (s *InboundService) disableInvalidClients(tx *gorm.DB) (bool, int64, []int,
 			WHERE clients.email IN ?
 		`, depletedEmails).Scan(&targets).Error
 		if err != nil {
-			return false, 0, nil, err
+			return false, 0, err
 		}
 	}
 
@@ -140,8 +153,8 @@ func (s *InboundService) disableInvalidClients(tx *gorm.DB) (bool, int64, []int,
 		}
 	}
 
-	if p != nil && len(localTargets) > 0 {
-		_ = s.xrayApi.Init(p.GetAPIPort())
+	if process := currentXrayProcess(); process != nil && len(localTargets) > 0 {
+		_ = s.xrayApi.Init(process.GetAPIPort())
 		for _, t := range localTargets {
 			err1 := s.xrayApi.RemoveUser(t.Tag, t.Email)
 			if err1 == nil {
@@ -162,24 +175,33 @@ func (s *InboundService) disableInvalidClients(tx *gorm.DB) (bool, int64, []int,
 		}
 	}
 
-	result := tx.Model(xray.ClientTraffic{}).
-		Where(cond+" AND enable = ?", now, true).
-		Update("enable", false)
-	err = result.Error
-	count := result.RowsAffected
-	if err != nil {
-		return needRestart, count, nil, err
+	// Flip the rows already collected above by primary key instead of
+	// re-evaluating the depleted predicate, which was a second full scan of
+	// client_traffics on every poll. Sorted ids keep the lock order stable.
+	ids := make([]int, 0, len(depletedRows))
+	for i := range depletedRows {
+		ids = append(ids, depletedRows[i].Id)
+	}
+	slices.Sort(ids)
+	var count int64
+	for _, batch := range chunkInts(ids, sqlInChunk) {
+		result := tx.Model(xray.ClientTraffic{}).
+			Where("id IN ? AND enable = ?", batch, true).
+			Update("enable", false)
+		if result.Error != nil {
+			return needRestart, count, result.Error
+		}
+		count += result.RowsAffected
 	}
 
 	if len(depletedEmails) > 0 {
 		if err := tx.Model(&model.ClientRecord{}).
 			Where("email IN ?", depletedEmails).
-			Updates(map[string]any{"enable": false, "updated_at": now}).Error; err != nil {
+			Updates(map[string]any{"enable": false, "updated_at": time.Now().UnixMilli()}).Error; err != nil {
 			logger.Warning("disableInvalidClients update clients.enable:", err)
 		}
 	}
 
-	disabledNodeIDs := make(map[int]struct{})
 	for inboundID, group := range remoteByInbound {
 		emails := make(map[string]struct{}, len(group))
 		for _, t := range group {
@@ -188,21 +210,10 @@ func (s *InboundService) disableInvalidClients(tx *gorm.DB) (bool, int64, []int,
 		if pushErr := s.disableRemoteClients(tx, inboundID, emails); pushErr != nil {
 			logger.Warning("disableInvalidClients: push to remote failed for inbound", inboundID, ":", pushErr)
 			needRestart = true
-		} else {
-			for _, t := range group {
-				if t.NodeID != nil {
-					disabledNodeIDs[*t.NodeID] = struct{}{}
-				}
-			}
 		}
 	}
 
-	nodeIDs := make([]int, 0, len(disabledNodeIDs))
-	for nodeID := range disabledNodeIDs {
-		nodeIDs = append(nodeIDs, nodeID)
-	}
-
-	return needRestart, count, nodeIDs, nil
+	return needRestart, count, nil
 }
 
 // markClientsDisabledInSettings flips client.enable=false in the inbound's
@@ -255,6 +266,10 @@ func (s *InboundService) markClientsDisabledInSettings(tx *gorm.DB, inboundID in
 	return &snapshot, &ib, nil
 }
 
+// disableRemoteClients flips the clients off in the inbound's stored settings
+// and pushes the updated inbound to its node, which applies it to its own
+// running Xray. That push is the whole reconcile — restarting the node's Xray
+// afterwards would drop every live connection on the node for nothing (#5740).
 func (s *InboundService) disableRemoteClients(tx *gorm.DB, inboundID int, emails map[string]struct{}) error {
 	oldSnapshot, ib, err := s.markClientsDisabledInSettings(tx, inboundID, emails)
 	if err != nil {

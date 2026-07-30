@@ -37,6 +37,8 @@ export const ClientRecordSchema = z.object({
   allowedIPs: z.string().optional(),
   preSharedKey: z.string().optional(),
   keepAlive: z.number().optional(),
+  secret: z.string().optional(),
+  adTag: z.string().optional(),
   createdAt: z.number().optional(),
   updatedAt: z.number().optional(),
 }).loose();
@@ -52,15 +54,29 @@ export const InboundOptionSchema = z.object({
   wgPublicKey: z.string().optional(),
   wgMtu: z.number().optional(),
   wgDns: z.string().optional(),
+  mtprotoDomain: z.string().optional(),
   // Hosting node id; absent/null for this panel's own inbounds (#4997).
   nodeId: z.number().nullable().optional(),
+  // Share-host resolution inputs, mirroring the backend resolveInboundAddress so
+  // the clients page picks the same WireGuard endpoint host as the subscription:
+  // the hosting node address, the inbound listen, and its share-address strategy.
+  nodeAddress: z.string().optional(),
+  listen: z.string().optional(),
+  shareAddr: z.string().optional(),
+  shareAddrStrategy: z.string().optional(),
 }).loose();
 
 export const InboundOptionsSchema = z.array(InboundOptionSchema);
 
+// The *Count fields are exact; the email arrays stop at the server's cap and
+// only feed the hover popovers, so never derive a counter from their length.
 export const ClientsSummarySchema = z.object({
   total: z.number(),
   active: z.number(),
+  onlineCount: z.number().optional().default(0),
+  depletedCount: z.number().optional().default(0),
+  expiringCount: z.number().optional().default(0),
+  deactiveCount: z.number().optional().default(0),
   online: nullableStringArray,
   depleted: nullableStringArray,
   expiring: nullableStringArray,

@@ -14,12 +14,16 @@ import {
   type OutboundTrafficRow,
 } from '@/schemas/xray';
 
-const DIRTY_POLL_MS = 1000;
 const DEFAULT_TEST_URL = 'https://www.google.com/generate_204';
 // One HTTP-mode batch request tests this many outbounds through a single
-// shared temp xray instance; chunking keeps responses bounded (~15s worst
-// case) and lands Test All results progressively.
+// shared temp xray instance; chunking keeps responses bounded (~30s worst
+// case — each probe is a cold plus a warm request) and lands Test All
+// results progressively.
 const HTTP_BATCH_CHUNK = 16;
+
+function normalizeOutboundTestUrl(url: string) {
+  return url || DEFAULT_TEST_URL;
+}
 
 export function isUdpOutbound(outbound: unknown): boolean {
   const o = outbound as { protocol?: string; streamSettings?: { network?: string } } | null | undefined;
@@ -27,6 +31,8 @@ export function isUdpOutbound(outbound: unknown): boolean {
   const n = o?.streamSettings?.network;
   return p === 'wireguard' || p === 'hysteria' || n === 'hysteria' || n === 'kcp' || n === 'quic';
 }
+
+export type OutboundTestMode = 'tcp' | 'http' | 'real';
 
 export type { OutboundTrafficRow, OutboundTestResult };
 
@@ -122,10 +128,11 @@ export function useXraySetting(): UseXraySettingResult {
     staleTime: Infinity,
   });
 
-  const [saveDisabled, setSaveDisabled] = useState(true);
   const [xraySetting, setXraySettingState] = useState('');
   const [templateSettings, setTemplateSettingsState] = useState<XraySettingsValue | null>(null);
   const [outboundTestUrl, setOutboundTestUrlState] = useState(DEFAULT_TEST_URL);
+  const [savedXraySetting, setSavedXraySetting] = useState('');
+  const [savedOutboundTestUrl, setSavedOutboundTestUrl] = useState(DEFAULT_TEST_URL);
   const [inboundTags, setInboundTags] = useState<string[]>([]);
   const [clientReverseTags, setClientReverseTags] = useState<string[]>([]);
   const [subscriptionOutbounds, setSubscriptionOutbounds] = useState<unknown[]>([]);
@@ -136,38 +143,40 @@ export function useXraySetting(): UseXraySettingResult {
   const [subscriptionTestStates, setSubscriptionTestStates] = useState<Record<string, OutboundTestState>>({});
   const [testingAll, setTestingAll] = useState(false);
 
-  const oldXraySettingRef = useRef('');
-  const oldOutboundTestUrlRef = useRef('');
   const syncingRef = useRef(false);
   const xraySettingRef = useRef('');
   const outboundTestUrlRef = useRef(outboundTestUrl);
+  const savedXraySettingRef = useRef(savedXraySetting);
+  const savedOutboundTestUrlRef = useRef(savedOutboundTestUrl);
   const templateSettingsRef = useRef<XraySettingsValue | null>(null);
   const subscriptionOutboundsRef = useRef<unknown[]>([]);
 
   xraySettingRef.current = xraySetting;
   outboundTestUrlRef.current = outboundTestUrl;
+  savedXraySettingRef.current = savedXraySetting;
+  savedOutboundTestUrlRef.current = savedOutboundTestUrl;
   templateSettingsRef.current = templateSettings;
   subscriptionOutboundsRef.current = subscriptionOutbounds;
 
-  // Seed local editor state from the config query. Runs on first fetch and
-  // every time the query refetches (e.g. after a successful save).
   useEffect(() => {
     if (!configQuery.data) return;
     const obj = configQuery.data;
     const pretty = JSON.stringify(obj.xraySetting, null, 2);
-    syncingRef.current = true;
-    setXraySettingState(pretty);
-    setTemplateSettingsState(obj.xraySetting);
-    oldXraySettingRef.current = pretty;
-    syncingRef.current = false;
+    const nextUrl = normalizeOutboundTestUrl(obj.outboundTestUrl || '');
     setInboundTags(obj.inboundTags || []);
     setClientReverseTags(obj.clientReverseTags || []);
     setSubscriptionOutbounds(obj.subscriptionOutbounds || []);
     setSubscriptionOutboundTags(obj.subscriptionOutboundTags || []);
-    const nextUrl = obj.outboundTestUrl || DEFAULT_TEST_URL;
+    const isDirty = savedXraySettingRef.current !== xraySettingRef.current
+      || savedOutboundTestUrlRef.current !== normalizeOutboundTestUrl(outboundTestUrlRef.current);
+    if (isDirty) return;
+    syncingRef.current = true;
+    setXraySettingState(pretty);
+    setTemplateSettingsState(obj.xraySetting);
+    setSavedXraySetting(pretty);
+    syncingRef.current = false;
     setOutboundTestUrlState(nextUrl);
-    oldOutboundTestUrlRef.current = nextUrl;
-    setSaveDisabled(true);
+    setSavedOutboundTestUrl(nextUrl);
   }, [configQuery.data]);
 
   const fetched = configQuery.data !== undefined || configQuery.isError;
@@ -217,7 +226,7 @@ export function useXraySetting(): UseXraySettingResult {
   const saveMut = useMutation({
     mutationFn: async () => {
       const sentXraySetting = xraySettingRef.current;
-      const sentTestUrl = outboundTestUrlRef.current || DEFAULT_TEST_URL;
+      const sentTestUrl = normalizeOutboundTestUrl(outboundTestUrlRef.current);
       const msg = await HttpUtil.post('/panel/api/xray/update', {
         xraySetting: sentXraySetting,
         outboundTestUrl: sentTestUrl,
@@ -226,9 +235,8 @@ export function useXraySetting(): UseXraySettingResult {
     },
     onSuccess: ({ msg, sentXraySetting, sentTestUrl }) => {
       if (!msg?.success) return;
-      oldXraySettingRef.current = sentXraySetting;
-      oldOutboundTestUrlRef.current = sentTestUrl;
-      setSaveDisabled(true);
+      setSavedXraySetting(sentXraySetting);
+      setSavedOutboundTestUrl(sentTestUrl);
       queryClient.invalidateQueries({ queryKey: keys.xray.config() });
     },
   });
@@ -288,7 +296,7 @@ export function useXraySetting(): UseXraySettingResult {
   const testOutbound = useCallback(
     async (index: number, outbound: unknown, mode = 'tcp'): Promise<OutboundTestResult | null> => {
       if (!outbound) return null;
-      const effMode = isUdpOutbound(outbound) ? 'http' : mode;
+      const effMode = mode === 'tcp' && isUdpOutbound(outbound) ? 'http' : mode;
       setOutboundTestStates((prev) => ({
         ...prev,
         [index]: { testing: true, result: null, mode: effMode },
@@ -305,7 +313,7 @@ export function useXraySetting(): UseXraySettingResult {
   const testSubscriptionOutbound = useCallback(
     async (tag: string, outbound: unknown, mode = 'tcp'): Promise<OutboundTestResult | null> => {
       if (!outbound || !tag) return null;
-      const effMode = isUdpOutbound(outbound) ? 'http' : mode;
+      const effMode = mode === 'tcp' && isUdpOutbound(outbound) ? 'http' : mode;
       setSubscriptionTestStates((prev) => ({
         ...prev,
         [tag]: { testing: true, result: null, mode: effMode },
@@ -333,6 +341,7 @@ export function useXraySetting(): UseXraySettingResult {
       // HTTP batches stay homogeneous (all template or all subscription) so a
       // tag shared between a template and a subscription outbound can't collide
       // inside one batch, and each batch's results route to one state map.
+      const probeMode = mode === 'real' ? 'real' : 'http';
       const httpTplQueue: { index: number; outbound: unknown }[] = [];
       const httpSubQueue: { tag: string; outbound: unknown }[] = [];
       const enqueue = (ob: { tag?: string; protocol?: string }, kind: 'tpl' | 'sub', index: number, tag: string) => {
@@ -341,7 +350,7 @@ export function useXraySetting(): UseXraySettingResult {
         // freedom ("direct") and dns aren't proxies — skip them in every mode.
         if (proto === 'freedom' || proto === 'dns') return;
         if (kind === 'sub' && !tag) return;
-        const toHttp = mode === 'http' || isUdpOutbound(ob);
+        const toHttp = mode !== 'tcp' || isUdpOutbound(ob);
         if (kind === 'tpl') {
           if (toHttp) httpTplQueue.push({ index, outbound: ob });
           else tcpQueue.push({ kind: 'tpl', index, outbound: ob });
@@ -375,10 +384,10 @@ export function useXraySetting(): UseXraySettingResult {
           const chunk = httpTplQueue.slice(at, at + HTTP_BATCH_CHUNK);
           setOutboundTestStates((prev) => {
             const next = { ...prev };
-            for (const item of chunk) next[item.index] = { testing: true, result: null, mode: 'http' };
+            for (const item of chunk) next[item.index] = { testing: true, result: null, mode: probeMode };
             return next;
           });
-          const results = await postOutboundTestBatch(chunk.map((c) => c.outbound), 'http');
+          const results = await postOutboundTestBatch(chunk.map((c) => c.outbound), probeMode);
           setOutboundTestStates((prev) => {
             const next = { ...prev };
             chunk.forEach((item, i) => {
@@ -393,10 +402,10 @@ export function useXraySetting(): UseXraySettingResult {
           const chunk = httpSubQueue.slice(at, at + HTTP_BATCH_CHUNK);
           setSubscriptionTestStates((prev) => {
             const next = { ...prev };
-            for (const item of chunk) next[item.tag] = { testing: true, result: null, mode: 'http' };
+            for (const item of chunk) next[item.tag] = { testing: true, result: null, mode: probeMode };
             return next;
           });
-          const results = await postOutboundTestBatch(chunk.map((c) => c.outbound), 'http');
+          const results = await postOutboundTestBatch(chunk.map((c) => c.outbound), probeMode);
           setSubscriptionTestStates((prev) => {
             const next = { ...prev };
             chunk.forEach((item, i) => {
@@ -421,14 +430,8 @@ export function useXraySetting(): UseXraySettingResult {
     }
   }, [testingAll, testOutbound, testSubscriptionOutbound, postOutboundTestBatch]);
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      const dirtyXray = oldXraySettingRef.current !== xraySettingRef.current;
-      const dirtyUrl = oldOutboundTestUrlRef.current !== outboundTestUrlRef.current;
-      setSaveDisabled(!(dirtyXray || dirtyUrl));
-    }, DIRTY_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, []);
+  const saveDisabled = savedXraySetting === xraySetting
+    && savedOutboundTestUrl === normalizeOutboundTestUrl(outboundTestUrl);
 
   const outboundsTraffic = useMemo(() => trafficQuery.data ?? [], [trafficQuery.data]);
 

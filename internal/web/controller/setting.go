@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -26,9 +27,20 @@ type updateUserForm struct {
 	TwoFactorCode string `json:"twoFactorCode" form:"twoFactorCode"`
 }
 
+// updateSettingForm carries the persisted settings plus request-scoped fields
+// that must never land in the settings table: the 2FA confirmation code and
+// the explicit clear flags for redacted secrets (a blank secret alone means
+// "unchanged", so clearing needs its own signal — see #5724).
 type updateSettingForm struct {
 	entity.AllSetting
-	TwoFactorCode string `json:"twoFactorCode" form:"twoFactorCode"`
+	TwoFactorCode     string `json:"twoFactorCode" form:"twoFactorCode"`
+	ClearTgBotToken   bool   `json:"clearTgBotToken" form:"clearTgBotToken"`
+	ClearLdapPassword bool   `json:"clearLdapPassword" form:"clearLdapPassword"`
+	ClearSmtpPassword bool   `json:"clearSmtpPassword" form:"clearSmtpPassword"`
+}
+
+type validateRegexForm struct {
+	Regex string `json:"regex" form:"regex"`
 }
 
 // SettingController handles settings and user management operations.
@@ -53,7 +65,9 @@ func (a *SettingController) initRouter(g *gin.RouterGroup) {
 
 	g.POST("/all", a.getAllSetting)
 	g.POST("/defaultSettings", a.getDefaultSettings)
+	g.POST("/factoryDefaults", a.getFactoryDefaults)
 	g.POST("/update", a.updateSetting)
+	g.POST("/validateRegex", a.validateRegex)
 	g.POST("/updateUser", a.updateUser)
 	g.POST("/restartPanel", a.restartPanel)
 	g.GET("/getDefaultJsonConfig", a.getDefaultXrayConfig)
@@ -63,6 +77,19 @@ func (a *SettingController) initRouter(g *gin.RouterGroup) {
 	g.POST("/apiTokens/setEnabled/:id", a.setApiTokenEnabled)
 	g.POST("/testSmtp", a.testSmtp)
 	g.POST("/testTgBot", a.testTgBot)
+}
+
+func (a *SettingController) validateRegex(c *gin.Context) {
+	form := &validateRegexForm{}
+	if err := c.ShouldBind(form); err != nil {
+		pureJsonMsg(c, http.StatusOK, false, err.Error())
+		return
+	}
+	if err := service.ValidateRegex(form.Regex); err != nil {
+		pureJsonMsg(c, http.StatusOK, false, err.Error())
+		return
+	}
+	pureJsonMsg(c, http.StatusOK, true, "")
 }
 
 // getAllSetting retrieves all current settings as the browser-safe view:
@@ -86,6 +113,10 @@ func (a *SettingController) getDefaultSettings(c *gin.Context) {
 	jsonObj(c, result, nil)
 }
 
+func (a *SettingController) getFactoryDefaults(c *gin.Context) {
+	jsonObj(c, a.settingService.GetFactoryDefaults(), nil)
+}
+
 // updateSetting updates all settings with the provided data.
 func (a *SettingController) updateSetting(c *gin.Context) {
 	form, ok := middleware.BindAndValidate[updateSettingForm](c)
@@ -105,7 +136,11 @@ func (a *SettingController) updateSetting(c *gin.Context) {
 			return
 		}
 	}
-	err := a.settingService.UpdateAllSetting(allSetting)
+	err := a.settingService.UpdateAllSetting(allSetting, service.SecretClears{
+		TgBotToken:   form.ClearTgBotToken,
+		LdapPassword: form.ClearLdapPassword,
+		SmtpPassword: form.ClearSmtpPassword,
+	})
 	if err == nil && twoFactorErr == nil && !oldTwoFactor && allSetting.TwoFactorEnable {
 		if bumpErr := a.userService.BumpLoginEpoch(); bumpErr != nil {
 			err = bumpErr

@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -37,15 +37,48 @@ jobs:
           go list ./... | grep -v '/frontend/node_modules/' > /tmp/go-packages.txt
           go test -shuffle=on -count=1 $(cat /tmp/go-packages.txt)
 
+  postgres-durable-first:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: xui_durable
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d xui_durable"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Stub internal/web/dist for go:embed
+        run: mkdir -p internal/web/dist && touch internal/web/dist/.gitkeep
+      - name: PostgreSQL durable-first tests
+        run: |
+          set -o pipefail
+          XUI_DB_TYPE=postgres XUI_DB_DSN="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=xui_durable sslmode=disable" \
+            go test ./internal/web/service -run 'PostgresCommitFailure' -count=1 -v | tee /tmp/postgres-durable-first.log
+          if grep -q -- '--- SKIP' /tmp/postgres-durable-first.log; then
+            exit 1
+          fi
+
   codegen:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
       - name: Regenerate schemas, examples and OpenAPI
@@ -58,7 +91,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -74,7 +107,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -91,7 +124,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -106,7 +139,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -121,7 +154,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -135,12 +168,18 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
         working-directory: frontend
+      - name: Install Playwright Chromium (Storybook story tests)
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
       - name: Test
         run: npm test
         working-directory: frontend
       - name: Build
         run: npm run build
         working-directory: frontend
+      - name: Build Storybook
+        run: npm run build-storybook
+        working-directory: frontend
       - name: Audit
-        run: npm audit --audit-level=high
+        run: npm audit --omit=dev --audit-level=high
         working-directory: frontend

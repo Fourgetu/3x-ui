@@ -60,7 +60,7 @@ func (a *XraySettingController) initRouter(g *gin.RouterGroup) {
 	g.POST("/outbound-subs/:id/move", a.moveOutboundSub)
 	g.POST("/outbound-subs/:id", a.updateOutboundSub)
 	g.DELETE("/outbound-subs/:id", a.deleteOutboundSub)
-	g.POST("/outbound-subs/:id/del", a.deleteOutboundSub) // axios-friendly alias
+	g.POST("/outbound-subs/:id/del", a.deleteOutboundSub) // POST alias for clients that can't send DELETE
 	g.POST("/outbound-subs/parse", a.parseOutboundSubURL) // preview without saving
 }
 
@@ -258,8 +258,8 @@ func (a *XraySettingController) resetOutboundsTraffic(c *gin.Context) {
 
 // testOutbound tests an outbound configuration and returns the delay/response time.
 // Optional form "allOutbounds": JSON array of all outbounds; used to resolve sockopt.dialerProxy dependencies.
-// Optional form "mode": "tcp" for a fast dial-only probe (parallel-safe),
-// anything else (default) for a full HTTP probe through a temp xray instance.
+// Optional form "mode": "tcp" for a fast dial-only probe, "real" for the cold
+// full-request delay, anything else (default) for a full HTTP probe through a temp xray instance.
 func (a *XraySettingController) testOutbound(c *gin.Context) {
 	outboundJSON := c.PostForm("outbound")
 	allOutboundsJSON := c.PostForm("allOutbounds")
@@ -291,8 +291,8 @@ func (a *XraySettingController) testOutbound(c *gin.Context) {
 // temp xray instance and returns an array of results in input order.
 // Form "outbounds": JSON array of outbound configs (required).
 // Optional form "allOutbounds": JSON array of all outbounds; used to resolve sockopt.dialerProxy dependencies.
-// Optional form "mode": "tcp" for fast dial-only probes, anything else
-// (default) for real HTTP requests routed through each outbound.
+// Optional form "mode": "tcp" for fast dial-only probes, "real" for the cold
+// full-request delay, anything else (default) for real HTTP requests routed through each outbound.
 func (a *XraySettingController) testOutbounds(c *gin.Context) {
 	outboundsJSON := c.PostForm("outbounds")
 	allOutboundsJSON := c.PostForm("allOutbounds")
@@ -408,6 +408,7 @@ func (a *XraySettingController) createOutboundSub(c *gin.Context) {
 	prefix := c.PostForm("tagPrefix")
 	enabled := c.PostForm("enabled") != "false"
 	allowPrivate := c.PostForm("allowPrivate") == "true"
+	allowInsecure := c.PostForm("allowInsecure") == "true"
 	prepend := c.PostForm("prepend") == "true"
 	intervalStr := c.PostForm("updateInterval")
 	interval := 600
@@ -416,7 +417,7 @@ func (a *XraySettingController) createOutboundSub(c *gin.Context) {
 			interval = v
 		}
 	}
-	sub, err := a.OutboundSubscriptionService.Create(remark, rawURL, prefix, enabled, interval, allowPrivate, prepend)
+	sub, err := a.OutboundSubscriptionService.Create(remark, rawURL, prefix, enabled, interval, allowPrivate, prepend, allowInsecure)
 	if err != nil {
 		jsonMsg(c, "Failed to create outbound subscription", err)
 		return
@@ -436,6 +437,7 @@ func (a *XraySettingController) updateOutboundSub(c *gin.Context) {
 	prefix := c.PostForm("tagPrefix")
 	enabled := c.PostForm("enabled") != "false"
 	allowPrivate := c.PostForm("allowPrivate") == "true"
+	allowInsecure := c.PostForm("allowInsecure") == "true"
 	prepend := c.PostForm("prepend") == "true"
 	intervalStr := c.PostForm("updateInterval")
 	interval := 600
@@ -444,7 +446,7 @@ func (a *XraySettingController) updateOutboundSub(c *gin.Context) {
 			interval = v
 		}
 	}
-	if err := a.OutboundSubscriptionService.Update(subID, remark, rawURL, prefix, enabled, interval, allowPrivate, prepend); err != nil {
+	if err := a.OutboundSubscriptionService.Update(subID, remark, rawURL, prefix, enabled, interval, allowPrivate, prepend, allowInsecure); err != nil {
 		jsonMsg(c, "Failed to update outbound subscription", err)
 		return
 	}
@@ -511,12 +513,13 @@ func (a *XraySettingController) parseOutboundSubURL(c *gin.Context) {
 		return
 	}
 	allowPrivate := c.PostForm("allowPrivate") == "true"
+	allowInsecure := c.PostForm("allowInsecure") == "true"
 	// Use a throw-away service instance; it only needs the settingService for proxy.
 	svc := service.OutboundSubscriptionService{}
 	// We don't have a direct "fetch once" that returns without storing, so we
 	// temporarily create a disabled row, refresh it, then delete. Cleaner would
 	// be to expose a pure ParseURL on the service, but this keeps the surface small.
-	tmp, err := svc.Create("preview", rawURL, "", false, 600, allowPrivate, false)
+	tmp, err := svc.Create("preview", rawURL, "", false, 600, allowPrivate, false, allowInsecure)
 	if err != nil {
 		jsonMsg(c, "Failed to preview subscription", err)
 		return

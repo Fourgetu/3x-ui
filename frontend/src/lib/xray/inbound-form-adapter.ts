@@ -2,6 +2,7 @@ import type { InboundFormValues, ShareAddrStrategy, TrafficReset } from '@/schem
 import type { InboundSettings } from '@/schemas/protocols/inbound';
 import {
   HysteriaClientSchema,
+  MtprotoClientSchema,
   ShadowsocksClientSchema,
   TrojanClientSchema,
   VlessClientSchema,
@@ -13,7 +14,8 @@ import type { Sniffing } from '@/schemas/primitives';
 import type { z } from 'zod';
 import { normalizeStreamSettingsForWire } from '@/lib/xray/stream-wire-normalize';
 import { canEnableSniffing } from '@/lib/xray/protocol-capabilities';
-import { XHttpXmuxSchema } from '@/schemas/protocols/stream/xhttp';
+import { SockoptStreamSettingsSchema } from '@/schemas/protocols/stream/sockopt';
+import { XHttpStreamSettingsSchema, XHttpXmuxSchema } from '@/schemas/protocols/stream/xhttp';
 
 const XMUX_DEFAULTS = XHttpXmuxSchema.parse({});
 
@@ -39,6 +41,7 @@ export interface RawInboundRow {
   enable?: boolean;
   expiryTime?: number;
   trafficReset?: string;
+  trafficResetDay?: number;
   lastTrafficResetTime?: number;
   nodeId?: number | null;
   shareAddrStrategy?: string;
@@ -58,6 +61,7 @@ export interface WireInboundPayload {
   enable: boolean;
   expiryTime: number;
   trafficReset: TrafficReset;
+  trafficResetDay: number;
   lastTrafficResetTime: number;
   listen: string;
   port: number;
@@ -123,6 +127,10 @@ const NETWORK_SETTINGS_KEY: Record<string, string> = {
 };
 
 function healStreamNetworkKey(stream: Record<string, unknown>): void {
+  if (typeof stream.method === 'string' && stream.method !== '') {
+    stream.network = stream.method;
+  }
+  delete stream.method;
   const network = typeof stream.network === 'string' ? stream.network : '';
   const key = NETWORK_SETTINGS_KEY[network];
   if (!key) return;
@@ -164,11 +172,20 @@ export function rawInboundToFormValues(row: RawInboundRow): InboundFormValues {
     const streamRecord = streamSettings as unknown as Record<string, unknown>;
     const xh = streamRecord.xhttpSettings;
     if (xh && typeof xh === 'object' && !Array.isArray(xh)) {
-      const xhttp = xh as Record<string, unknown>;
+      const parsed = XHttpStreamSettingsSchema.safeParse(xh);
+      const xhttp = (parsed.success ? parsed.data : xh) as Record<string, unknown>;
+      streamRecord.xhttpSettings = xhttp;
       const xmux = xhttp.xmux;
       if (xmux && typeof xmux === 'object' && !Array.isArray(xmux)) {
         xhttp.enableXmux = true;
         xhttp.xmux = { ...XMUX_DEFAULTS, ...(xmux as Record<string, unknown>) };
+      }
+    }
+    const so = streamRecord.sockopt;
+    if (so && typeof so === 'object' && !Array.isArray(so)) {
+      const parsed = SockoptStreamSettingsSchema.safeParse(so);
+      if (parsed.success) {
+        streamRecord.sockopt = { ...(so as Record<string, unknown>), ...parsed.data };
       }
     }
   }
@@ -187,6 +204,7 @@ export function rawInboundToFormValues(row: RawInboundRow): InboundFormValues {
     down: row.down ?? 0,
     total: row.total ?? 0,
     trafficReset: coerceTrafficReset(row.trafficReset),
+    trafficResetDay: Math.min(31, Math.max(1, row.trafficResetDay ?? 1)),
     lastTrafficResetTime: row.lastTrafficResetTime ?? 0,
     nodeId: row.nodeId ?? null,
     shareAddrStrategy: coerceShareAddrStrategy(row.shareAddrStrategy),
@@ -236,6 +254,7 @@ function clientSchemaForProtocol(protocol: string): z.ZodType | null {
     case 'shadowsocks': return ShadowsocksClientSchema;
     case 'hysteria': return HysteriaClientSchema;
     case 'wireguard': return WireguardClientSchema;
+    case 'mtproto': return MtprotoClientSchema;
     default: return null;
   }
 }
@@ -328,6 +347,7 @@ export function formValuesToWirePayload(values: InboundFormValues): WireInboundP
     enable: values.enable,
     expiryTime: values.expiryTime,
     trafficReset: values.trafficReset,
+    trafficResetDay: values.trafficResetDay,
     lastTrafficResetTime: values.lastTrafficResetTime,
     listen: values.listen,
     port: values.port,

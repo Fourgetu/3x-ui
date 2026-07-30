@@ -1,6 +1,6 @@
-import axios from 'axios';
-import type { AxiosError, AxiosRequestConfig, AxiosResponse } from 'axios';
 import i18next from 'i18next';
+import { httpRequest } from '@/api/http-init';
+import type { HttpResponse } from '@/api/http-init';
 import { getMessage } from './messageBus';
 
 type RespEnvelope = { success?: unknown; msg?: unknown; obj?: unknown };
@@ -17,7 +17,11 @@ export class Msg<T = unknown> {
   }
 }
 
-export interface HttpOptions extends AxiosRequestConfig {
+export interface HttpOptions {
+  headers?: Record<string, string> | Headers;
+  params?: unknown;
+  timeout?: number;
+  signal?: AbortSignal;
   silent?: boolean;
   silentSuccess?: boolean;
 }
@@ -48,7 +52,7 @@ export class HttpUtil {
     getMessage().error(msg.msg);
   }
 
-  static _respToMsg(resp: AxiosResponse | undefined): Msg {
+  static _respToMsg(resp: HttpResponse | undefined): Msg {
     if (!resp || !resp.data) {
       return new Msg(false, 'No response data');
     }
@@ -64,32 +68,34 @@ export class HttpUtil {
   }
 
   static async get<T = unknown>(url: string, params?: unknown, options: HttpOptions = {}): Promise<Msg<T>> {
-    const { silent, silentSuccess, ...axiosOpts } = options;
+    const { silent, silentSuccess, ...rest } = options;
     try {
-      const resp = await axios.get(url, { params, ...axiosOpts });
+      const resp = await httpRequest('GET', url, undefined, { ...rest, params });
       const msg = this._respToMsg(resp) as Msg<T>;
       if (!silent) this._handleMsg(msg, silentSuccess);
       return msg;
     } catch (error) {
       console.error('GET request failed:', error);
-      const err = error as AxiosError<{ message?: string }>;
-      const errorMsg = new Msg<T>(false, err.response?.data?.message || err.message || 'Request failed');
+      const err = error as { response?: { data?: { msg?: string; message?: string } }; message?: string };
+      const data = err.response?.data;
+      const errorMsg = new Msg<T>(false, data?.msg || data?.message || err.message || 'Request failed');
       if (!silent) this._handleMsg(errorMsg);
       return errorMsg;
     }
   }
 
   static async post<T = unknown>(url: string, data?: unknown, options: HttpOptions = {}): Promise<Msg<T>> {
-    const { silent, silentSuccess, ...axiosOpts } = options;
+    const { silent, silentSuccess, ...rest } = options;
     try {
-      const resp = await axios.post(url, data, axiosOpts);
+      const resp = await httpRequest('POST', url, data, rest);
       const msg = this._respToMsg(resp) as Msg<T>;
       if (!silent) this._handleMsg(msg, silentSuccess);
       return msg;
     } catch (error) {
       console.error('POST request failed:', error);
-      const err = error as AxiosError<{ message?: string }>;
-      const errorMsg = new Msg<T>(false, err.response?.data?.message || err.message || 'Request failed');
+      const err = error as { response?: { data?: { msg?: string; message?: string } }; message?: string };
+      const data = err.response?.data;
+      const errorMsg = new Msg<T>(false, data?.msg || data?.message || err.message || 'Request failed');
       if (!silent) this._handleMsg(errorMsg);
       return errorMsg;
     }
@@ -637,8 +643,10 @@ export class Base64 {
   }
 
   static decode(content: string = ''): string {
+    const normalized = content.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
     return new TextDecoder().decode(
-      Uint8Array.from(window.atob(content), (c) => c.charCodeAt(0)),
+      Uint8Array.from(window.atob(padded), (c) => c.charCodeAt(0)),
     );
   }
 }
@@ -677,6 +685,14 @@ export class CPUFormatter {
 }
 
 export class TimeFormatter {
+  static formatClock(unixSec: number): string {
+    const d = new Date(unixSec * 1000);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    return `${hh}:${mm}:${ss}`;
+  }
+
   static formatSecond(second: number): string {
     if (second < 60) return second.toFixed(0) + 's';
     if (second < 3600) return (second / 60).toFixed(0) + 'm';

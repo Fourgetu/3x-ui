@@ -9,8 +9,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -132,6 +134,13 @@ func withStubProcess(t *testing.T, factory func(cfg *xray.Config, configPath str
 	orig := newBatchProcess
 	newBatchProcess = factory
 	t.Cleanup(func() { newBatchProcess = orig })
+}
+
+func withEgressTraceProbe(t *testing.T, probe func(*url.URL) *TestEgressResult) {
+	t.Helper()
+	orig := egressTraceProbe
+	egressTraceProbe = probe
+	t.Cleanup(func() { egressTraceProbe = orig })
 }
 
 func mustJSON(t *testing.T, v any) string {
@@ -399,7 +408,12 @@ func TestTestOutboundsTCPLane(t *testing.T) {
 }
 
 func TestTestOutboundsHTTPBatchThroughStubSocks(t *testing.T) {
+	var mu sync.Mutex
+	requestsPerConn := make(map[string]int)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requestsPerConn[r.RemoteAddr]++
+		mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
@@ -410,6 +424,9 @@ func TestTestOutboundsHTTPBatchThroughStubSocks(t *testing.T) {
 		calls++
 		proc = &stubProcess{cfg: cfg, serveSocks: true}
 		return proc
+	})
+	withEgressTraceProbe(t, func(*url.URL) *TestEgressResult {
+		return &TestEgressResult{IPv4: "198.51.100.1", Country: "ZZ", Warp: "off"}
 	})
 
 	batch := mustJSON(t, []any{
@@ -439,9 +456,119 @@ func TestTestOutboundsHTTPBatchThroughStubSocks(t *testing.T) {
 		if r.Mode != "http" {
 			t.Errorf("result %d mode = %q", i, r.Mode)
 		}
+		if r.Egress == nil || r.Egress.IPv4 != "198.51.100.1" {
+			t.Errorf("result %d egress = %+v", i, r.Egress)
+		}
 	}
 	if proc.IsRunning() {
 		t.Error("temp process not stopped after batch")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	totalRequests := 0
+	for addr, n := range requestsPerConn {
+		totalRequests += n
+		if n != 2 {
+			t.Errorf("connection %s served %d requests, want 2 (warm delay request must reuse the cold request's connection)", addr, n)
+		}
+	}
+	if totalRequests != 4 {
+		t.Errorf("test URL served %d requests, want 4 (cold + warm per probe)", totalRequests)
+	}
+}
+
+func TestTestOutboundsRealDelayBatchThroughStubSocks(t *testing.T) {
+	var mu sync.Mutex
+	requestsPerConn := make(map[string]int)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requestsPerConn[r.RemoteAddr]++
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	withStubProcess(t, func(cfg *xray.Config, configPath string) batchProcess {
+		return &stubProcess{cfg: cfg, serveSocks: true}
+	})
+
+	batch := mustJSON(t, []any{
+		map[string]any{"tag": "a", "protocol": "vless"},
+		map[string]any{"tag": "wg", "protocol": "wireguard"},
+	})
+	results, err := (&OutboundService{}).TestOutbounds(batch, srv.URL, "", "real")
+	if err != nil {
+		t.Fatalf("TestOutbounds: %v", err)
+	}
+	for i, r := range results {
+		if !r.Success {
+			t.Fatalf("result %d failed: %+v", i, r)
+		}
+		if r.Mode != "real" {
+			t.Errorf("result %d mode = %q, want %q", i, r.Mode, "real")
+		}
+		if r.HTTPStatus != http.StatusNoContent {
+			t.Errorf("result %d status = %d, want 204", i, r.HTTPStatus)
+		}
+		if r.Delay < 1 || r.ConnectMs < 1 || r.TTFBMs < 1 {
+			t.Errorf("result %d timing not populated: %+v", i, r)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	totalRequests := 0
+	for addr, n := range requestsPerConn {
+		totalRequests += n
+		if n != 1 {
+			t.Errorf("connection %s served %d requests, want 1 (real mode must skip the warm request)", addr, n)
+		}
+	}
+	if totalRequests != 2 {
+		t.Errorf("test URL served %d requests, want 2 (one cold request per probe)", totalRequests)
+	}
+}
+
+func TestTestOutboundsTCPModeForcesUDPToHTTPProbe(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	withStubProcess(t, func(cfg *xray.Config, configPath string) batchProcess {
+		return &stubProcess{cfg: cfg, serveSocks: true}
+	})
+	withEgressTraceProbe(t, func(*url.URL) *TestEgressResult {
+		return &TestEgressResult{IPv4: "198.51.100.2", Country: "ZZ", Warp: "off"}
+	})
+
+	batch := mustJSON(t, []any{map[string]any{"tag": "wg", "protocol": "wireguard"}})
+	results, err := (&OutboundService{}).TestOutbounds(batch, srv.URL, "", "tcp")
+	if err != nil {
+		t.Fatalf("TestOutbounds: %v", err)
+	}
+	r := results[0]
+	if !r.Success || r.Mode != "http" {
+		t.Errorf("UDP outbound in tcp mode = %+v, want success with mode %q", r, "http")
+	}
+	if r.Egress == nil || r.Egress.IPv4 != "198.51.100.2" {
+		t.Errorf("UDP outbound egress = %+v", r.Egress)
+	}
+}
+
+func TestProbeModeLabel(t *testing.T) {
+	cases := []struct{ mode, want string }{
+		{"tcp", "tcp"},
+		{"real", "real"},
+		{"http", "http"},
+		{"", "http"},
+		{"bogus", "http"},
+	}
+	for _, c := range cases {
+		if got := probeModeLabel(c.mode); got != c.want {
+			t.Errorf("probeModeLabel(%q) = %q, want %q", c.mode, got, c.want)
+		}
 	}
 }
 
@@ -463,7 +590,7 @@ func TestProbeThroughSocksTransportFailure(t *testing.T) {
 	}()
 
 	var result TestOutboundResult
-	probeThroughSocks(l.Addr().(*net.TCPAddr).Port, "http://127.0.0.1:9/", 2*time.Second, &result)
+	probeThroughSocks(l.Addr().(*net.TCPAddr).Port, "http://127.0.0.1:9/", 2*time.Second, false, &result)
 	if result.Success || result.Error == "" {
 		t.Errorf("expected transport failure, got %+v", result)
 	}

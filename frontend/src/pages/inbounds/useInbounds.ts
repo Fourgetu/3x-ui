@@ -13,6 +13,7 @@ import { OnlinesSchema, OnlineByNodeSchema, ActiveInboundsByNodeSchema } from '@
 import { DefaultsPayloadSchema, type DefaultsPayload } from '@/schemas/defaults';
 
 import type { InboundSpeedEntry } from './list/types';
+import { TRAFFIC_POLL_INTERVAL_S } from '@/lib/traffic/poll-interval';
 
 export interface SubSettings {
   enable: boolean;
@@ -27,10 +28,6 @@ export interface SubSettings {
 }
 
 type DBInboundInstance = InstanceType<typeof DBInbound>;
-
-// Server-side traffic polling interval in seconds. XrayTrafficJob broadcasts
-// deltas accumulated over this window, so dividing by it yields bytes/sec.
-const TRAFFIC_POLL_INTERVAL_S = 5;
 
 // Speed is delta-derived, so it can't be recomputed until the first poll after
 // mount; navigating away and back would otherwise blank the column for up to one
@@ -63,6 +60,8 @@ const TRACKED_PROTOCOLS: readonly string[] = [
   Protocols.TROJAN,
   Protocols.SHADOWSOCKS,
   Protocols.HYSTERIA,
+  Protocols.WIREGUARD,
+  Protocols.MTPROTO,
 ];
 
 async function fetchSlimInbounds(): Promise<unknown[]> {

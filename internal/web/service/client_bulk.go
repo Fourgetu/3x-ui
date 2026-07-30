@@ -359,9 +359,15 @@ func (s *ClientService) BulkAdjust(inboundSvc *InboundService, emails []string, 
 					skippedReasons[email] = "unlimited traffic"
 				}
 			} else {
-				next := max(rec.TotalGB+addBytes, 0)
-				entry.applyTotal = true
-				entry.newTotal = next
+				next := rec.TotalGB + addBytes
+				if next <= 0 {
+					if _, exists := skippedReasons[email]; !exists {
+						skippedReasons[email] = "reduction exceeds remaining quota"
+					}
+				} else {
+					entry.applyTotal = true
+					entry.newTotal = next
+				}
 			}
 		}
 		if entry.applyExpiry || entry.applyTotal || adjustFlow {
@@ -403,6 +409,7 @@ func (s *ClientService) BulkAdjust(inboundSvc *InboundService, emails []string, 
 	needRestart := false
 	flowHonored := map[string]bool{}
 	flowIneligible := map[string]bool{}
+	execFailed := map[string]bool{}
 	for inboundId, ibEmails := range emailsByInbound {
 		ibRes := s.bulkAdjustInboundClients(inboundSvc, inboundId, ibEmails, plan, flow)
 		if ibRes.needRestart {
@@ -415,14 +422,14 @@ func (s *ClientService) BulkAdjust(inboundSvc *InboundService, emails []string, 
 			flowIneligible[email] = true
 		}
 		for email, reason := range ibRes.perEmailSkipped {
+			execFailed[email] = true
 			if _, already := skippedReasons[email]; !already {
 				skippedReasons[email] = reason
 			}
 		}
 	}
 
-	now := time.Now().Unix() * 1000
-	cond := depletedCond(db)
+	cond, condArgs := depletedCond(db)
 	candidateEmails := make([]string, 0, len(plan))
 	for email, entry := range plan {
 		if entry.applyExpiry || entry.applyTotal {
@@ -433,7 +440,7 @@ func (s *ClientService) BulkAdjust(inboundSvc *InboundService, emails []string, 
 	for _, batch := range chunkStrings(candidateEmails, sqlInChunk) {
 		var rows []string
 		if err := db.Model(xray.ClientTraffic{}).
-			Where(cond+" AND enable = ? AND email IN ?", now, false, batch).
+			Where(cond+" AND enable = ? AND email IN ?", append(append([]any{}, condArgs...), false, batch)...).
 			Pluck("email", &rows).Error; err != nil {
 			return result, needRestart, err
 		}
@@ -444,7 +451,7 @@ func (s *ClientService) BulkAdjust(inboundSvc *InboundService, emails []string, 
 
 	adjusted := map[string]struct{}{}
 	for email, entry := range plan {
-		if _, skipped := skippedReasons[email]; skipped {
+		if execFailed[email] {
 			continue
 		}
 		updates := map[string]any{}
@@ -495,7 +502,7 @@ func (s *ClientService) BulkAdjust(inboundSvc *InboundService, emails []string, 
 		for _, batch := range chunkStrings(wasList, sqlInChunk) {
 			var rows []string
 			if err := db.Model(xray.ClientTraffic{}).
-				Where(cond+" AND email IN ?", now, batch).
+				Where(cond+" AND email IN ?", append(append([]any{}, condArgs...), batch)...).
 				Pluck("email", &rows).Error; err != nil {
 				return result, needRestart, err
 			}
@@ -645,6 +652,7 @@ func (s *ClientService) bulkAdjustInboundClients(
 		}
 		return res
 	}
+	prevSettings := oldInbound.Settings
 	oldInbound.Settings = string(newSettings)
 
 	// A flow change rewrites the user's xray config, which the lightweight
@@ -670,6 +678,7 @@ func (s *ClientService) bulkAdjustInboundClients(
 				push = false
 			}
 			if push {
+				pushFailed := false
 				for email := range foundEmails {
 					entry := plan[email]
 					updated := *entry.record.ToClient()
@@ -682,7 +691,11 @@ func (s *ClientService) bulkAdjustInboundClients(
 					updated.UpdatedAt = nowMs
 					if err1 := rt.UpdateUser(context.Background(), oldInbound, email, updated); err1 != nil {
 						logger.Warning("Error in updating client on", rt.Name(), ":", err1)
+						pushFailed = true
 					}
+				}
+				if !pushFailed {
+					advancePushedInbound(rt, prevSettings, oldInbound)
 				}
 			}
 		}
@@ -809,7 +822,7 @@ func (s *ClientService) BulkDelete(inboundSvc *InboundService, emails []string, 
 
 	needRestart := false
 	for inboundId, ibEmails := range emailsByInbound {
-		ibResult := s.bulkDelInboundClients(inboundSvc, inboundId, ibEmails, recordsByEmail, false)
+		ibResult := s.bulkDelInboundClients(inboundSvc, inboundId, ibEmails, recordsByEmail, keepTraffic)
 		if ibResult.needRestart {
 			needRestart = true
 		}
@@ -834,8 +847,14 @@ func (s *ClientService) BulkDelete(inboundSvc *InboundService, emails []string, 
 		// Serialize the row cleanup against the traffic poll to avoid the
 		// cross-transaction lock-order deadlock on client_traffics/inbounds.
 		if err := runSerializedTx(func(tx *gorm.DB) error {
+			if e := adjustGroupBaselinesForRemovedTraffic(tx, successEmails); e != nil {
+				return e
+			}
 			for _, batch := range chunkInts(successIds, sqlInChunk) {
 				if e := tx.Where("client_id IN ?", batch).Delete(&model.ClientInbound{}).Error; e != nil {
+					return e
+				}
+				if e := tx.Where("client_id IN ?", batch).Delete(&model.ClientExternalLink{}).Error; e != nil {
 					return e
 				}
 			}
@@ -957,6 +976,7 @@ func (s *ClientService) bulkDelInboundClients(
 		}
 		return res
 	}
+	prevSettings := oldInbound.Settings
 	oldInbound.Settings = string(newSettings)
 
 	foundList := make([]string, 0, len(foundEmails))
@@ -1057,10 +1077,18 @@ func (s *ClientService) bulkDelInboundClients(
 				push = false
 			}
 			if push {
+				// bulkDelInboundClients only runs for full client deletion
+				// (BulkDelete), so the node must drop its client record too,
+				// not just detach from this inbound (#5797).
+				pushFailed := false
 				for email := range foundEmails {
-					if err1 := rt.DeleteUser(context.Background(), oldInbound, email); err1 != nil {
+					if err1 := rt.DeleteClient(context.Background(), email); err1 != nil {
 						logger.Warning("Error in deleting client on", rt.Name(), ":", err1)
+						pushFailed = true
 					}
+				}
+				if !pushFailed {
+					advancePushedInbound(rt, prevSettings, oldInbound)
 				}
 			}
 		}
@@ -1190,7 +1218,7 @@ func (s *ClientService) BulkCreate(inboundSvc *InboundService, payloads []Client
 
 	db := database.GetDB()
 	const lookupChunk = 400
-	existingEmailSub := make(map[string]string, len(emails))
+	existingByEmail := make(map[string]model.ClientRecord, len(emails))
 	for start := 0; start < len(emails); start += lookupChunk {
 		end := min(start+lookupChunk, len(emails))
 		var rows []model.ClientRecord
@@ -1198,7 +1226,7 @@ func (s *ClientService) BulkCreate(inboundSvc *InboundService, payloads []Client
 			return result, false, e
 		}
 		for i := range rows {
-			existingEmailSub[strings.ToLower(rows[i].Email)] = rows[i].SubID
+			existingByEmail[strings.ToLower(rows[i].Email)] = rows[i]
 		}
 	}
 	existingSubOwner := make(map[string]string, len(subIDs))
@@ -1234,10 +1262,24 @@ func (s *ClientService) BulkCreate(inboundSvc *InboundService, payloads []Client
 
 	for idx := range prep {
 		le := strings.ToLower(prep[idx].client.Email)
-		if existSub, ok := existingEmailSub[le]; ok && existSub != prep[idx].client.SubID {
-			failed[idx] = true
-			reason[idx] = "email already in use: " + prep[idx].client.Email
-			continue
+		if rec, ok := existingByEmail[le]; ok {
+			if rec.SubID != prep[idx].client.SubID {
+				failed[idx] = true
+				reason[idx] = "email already in use: " + prep[idx].client.Email
+				continue
+			}
+			if prep[idx].client.ID == "" {
+				prep[idx].client.ID = rec.UUID
+			}
+			if prep[idx].client.Password == "" {
+				prep[idx].client.Password = rec.Password
+			}
+			if prep[idx].client.Auth == "" {
+				prep[idx].client.Auth = rec.Auth
+			}
+			if prep[idx].client.Secret == "" {
+				prep[idx].client.Secret = rec.Secret
+			}
 		}
 		if owner, ok := existingSubOwner[prep[idx].client.SubID]; ok && owner != le {
 			failed[idx] = true
@@ -1557,6 +1599,7 @@ func (s *ClientService) bulkSetEnableInboundClients(inboundSvc *InboundService, 
 		}
 		return res
 	}
+	prevSettings := oldInbound.Settings
 	oldInbound.Settings = string(newSettings)
 
 	rt, push, _, perr := inboundSvc.nodePushPlan(oldInbound)
@@ -1622,12 +1665,17 @@ func (s *ClientService) bulkSetEnableInboundClients(inboundSvc *InboundService, 
 			}
 		}
 	} else if push {
+		pushFailed := false
 		for _, ch := range changed {
 			updated := ch.client
 			updated.UpdatedAt = nowMs
 			if err1 := rt.UpdateUser(context.Background(), oldInbound, ch.email, updated); err1 != nil {
 				logger.Warning("Error in updating client on", rt.Name(), ":", err1)
+				pushFailed = true
 			}
+		}
+		if !pushFailed {
+			advancePushedInbound(rt, prevSettings, oldInbound)
 		}
 	}
 

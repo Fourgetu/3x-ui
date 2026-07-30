@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/mhsanaei/3x-ui/v3/internal/database/model"
@@ -20,7 +21,8 @@ func TestAllocateWireguardAddress(t *testing.T) {
 		{name: "fills gap", used: []string{"10.0.0.3/32", "10.0.0.4/32"}, base: "10.0.0.0/24", want: "10.0.0.2/32"},
 		{name: "ignores catch-all", used: []string{"0.0.0.0/0", "::/0"}, base: "10.0.0.0/24", want: "10.0.0.2/32"},
 		{name: "default base when empty", used: nil, base: "", want: "10.0.0.2/32"},
-		{name: "exhausted /30", used: []string{"10.9.0.2/32", "10.9.0.3/32"}, base: "10.9.0.0/30", err: true},
+		{name: "full ipv4 scope widens instead of failing", used: []string{"10.9.0.2/32", "10.9.0.3/32"}, base: "10.9.0.0/30", want: "10.9.0.4/32"},
+		{name: "exhausted ipv6 scope errors", used: []string{"fd00::2/128", "fd00::3/128"}, base: "fd00::/126", err: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -130,6 +132,40 @@ func TestDefaultWireguardClientsHonorsExistingSubnet(t *testing.T) {
 	}
 }
 
+func TestAllocateWireguardAddressWidensPastFullSlash24(t *testing.T) {
+	used := make([]string, 0, 254)
+	for i := 2; i <= 255; i++ {
+		used = append(used, fmt.Sprintf("10.0.0.%d/32", i))
+	}
+
+	got, err := allocateWireguardAddress(used, "10.0.0.0/24")
+	if err != nil {
+		t.Fatalf("allocate with a full /24: %v", err)
+	}
+	if got != "10.0.1.0/32" {
+		t.Fatalf("address after a full /24 = %q, want 10.0.1.0/32", got)
+	}
+
+	used = append(used, got)
+	next, err := allocateWireguardAddress(used, "10.0.0.0/24")
+	if err != nil {
+		t.Fatalf("allocate after widening: %v", err)
+	}
+	if next != "10.0.1.1/32" {
+		t.Fatalf("second widened address = %q, want 10.0.1.1/32", next)
+	}
+}
+
+func TestAllocateWireguardAddressFillsItsOwnSlash24First(t *testing.T) {
+	got, err := allocateWireguardAddress([]string{"172.16.0.2/32"}, "172.16.0.0/24")
+	if err != nil {
+		t.Fatalf("allocateWireguardAddress: %v", err)
+	}
+	if got != "172.16.0.3/32" {
+		t.Fatalf("address = %q, want 172.16.0.3/32 — the inbound's own /24 comes first", got)
+	}
+}
+
 func TestDefaultWireguardClientsAllocatesDistinctIPs(t *testing.T) {
 	clients := []model.Client{{Email: "x@wg"}, {Email: "y@wg"}}
 	ifaces := []any{map[string]any{"email": "x@wg"}, map[string]any{"email": "y@wg"}}
@@ -138,5 +174,69 @@ func TestDefaultWireguardClientsAllocatesDistinctIPs(t *testing.T) {
 	}
 	if clients[0].AllowedIPs[0] == clients[1].AllowedIPs[0] {
 		t.Fatalf("two clients got the same address: %v", clients[0].AllowedIPs)
+	}
+}
+
+func TestNormalizeWireguardAllowedIPs(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []string
+		want []string
+		err  bool
+	}{
+		{name: "cidr passes through", in: []string{"10.0.0.5/32"}, want: []string{"10.0.0.5/32"}},
+		{name: "bare ipv4 becomes /32", in: []string{"10.0.0.5"}, want: []string{"10.0.0.5/32"}},
+		{name: "bare ipv6 becomes /128", in: []string{"fd00::5"}, want: []string{"fd00::5/128"}},
+		{name: "trims and drops empties", in: []string{" 10.0.0.5/32 ", "", "  "}, want: []string{"10.0.0.5/32"}},
+		{name: "dedupes", in: []string{"10.0.0.5/32", "10.0.0.5/32"}, want: []string{"10.0.0.5/32"}},
+		{name: "routed subnet allowed", in: []string{"10.0.0.5/32", "192.168.1.0/24"}, want: []string{"10.0.0.5/32", "192.168.1.0/24"}},
+		{name: "garbage rejected", in: []string{"not-an-ip"}, err: true},
+		{name: "bad prefix rejected", in: []string{"10.0.0.5/99"}, err: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeWireguardAllowedIPs(tt.in)
+			if tt.err {
+				if err == nil {
+					t.Fatalf("expected error, got %v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("got %v, want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestDefaultWireguardClientsHonorsAndValidatesSuppliedAllowedIPs(t *testing.T) {
+	existing := []model.Client{{Email: "old@wg", AllowedIPs: []string{"10.0.0.2/32"}}}
+
+	clients := []model.Client{{Email: "c@wg", AllowedIPs: []string{"10.0.0.9"}}}
+	ifaces := []any{map[string]any{"email": "c@wg"}}
+	if err := defaultWireguardClients(existing, clients, ifaces); err != nil {
+		t.Fatalf("defaultWireguardClients: %v", err)
+	}
+	if len(clients[0].AllowedIPs) != 1 || clients[0].AllowedIPs[0] != "10.0.0.9/32" {
+		t.Fatalf("supplied allowedIPs not normalized: %v", clients[0].AllowedIPs)
+	}
+
+	dup := []model.Client{{Email: "d@wg", AllowedIPs: []string{"10.0.0.2/32"}}}
+	err := defaultWireguardClients(existing, dup, []any{map[string]any{"email": "d@wg"}})
+	if err == nil {
+		t.Fatal("duplicate allowedIPs across clients must be rejected")
+	}
+
+	bad := []model.Client{{Email: "e@wg", AllowedIPs: []string{"not-an-ip"}}}
+	if err := defaultWireguardClients(existing, bad, []any{map[string]any{"email": "e@wg"}}); err == nil {
+		t.Fatal("invalid allowedIPs entry must be rejected")
 	}
 }

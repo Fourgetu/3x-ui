@@ -256,6 +256,11 @@ export const sections: readonly Section[] = [
     endpoints: [
       {
         method: 'GET',
+        path: '/panel/api/openapi.json',
+        summary: 'Serve this API description as an OpenAPI 3 document — the same file that powers the API Docs page. Requires a session or Bearer token like the rest of /panel/api. Useful for generating clients or importing into API tooling.',
+      },
+      {
+        method: 'GET',
         path: '/panel/api/server/status',
         summary: 'Real-time machine snapshot: CPU, memory, swap, disk, network IO, load averages, open connections, Xray state. Cached and refreshed every 2 seconds in the background.',
         response: '{\n  "success": true,\n  "obj": {\n    "cpu": 12.5,\n    "mem": { "current": 2147483648, "total": 8589934592 },\n    "swap": { "current": 0, "total": 4294967296 },\n    "disk": { "current": 53687091200, "total": 268435456000 },\n    "netIO": { "up": 1073741824, "down": 2147483648 },\n    "xray": { "state": "running", "version": "v25.10.31" },\n    "tcpCount": 42,\n    "load": { "load1": 0.5, "load5": 0.3, "load15": 0.2 }\n  }\n}',
@@ -325,6 +330,12 @@ export const sections: readonly Section[] = [
       },
       {
         method: 'GET',
+        path: '/panel/api/server/getUpdateStatus',
+        summary: 'Report the outcome of the most recently launched panel self-update (see POST updatePanel). Compare the returned runId against the one updatePanel returned to tell this run apart from a stale result.',
+        responseSchema: 'PanelUpdateStatus',
+      },
+      {
+        method: 'GET',
         path: '/panel/api/server/getConfigJson',
         summary: 'Return the assembled Xray config that\u2019s currently running on this host.',
         response: '{\n  "success": true,\n  "obj": {\n    "log": { "loglevel": "warning" },\n    "inbounds": [...],\n    "outbounds": [...],\n    "routing": { "rules": [...] }\n  }\n}',
@@ -332,7 +343,7 @@ export const sections: readonly Section[] = [
       {
         method: 'GET',
         path: '/panel/api/server/getDb',
-        summary: 'Stream the SQLite database file as an attachment. Use as a manual backup.',
+        summary: 'Stream a full database backup as an attachment: the SQLite .db file on SQLite panels, or a pg_dump custom-format archive (.dump) on PostgreSQL panels. Use as a manual backup.',
       },
       {
         method: 'GET',
@@ -407,6 +418,7 @@ export const sections: readonly Section[] = [
         method: 'POST',
         path: '/panel/api/server/updatePanel',
         summary: 'Self-update the panel to the latest version. The server restarts on success.',
+        response: '{\n  "success": true,\n  "obj": {\n    "runId": "1735689600123456789"\n  }\n}',
       },
       {
         method: 'POST',
@@ -461,9 +473,9 @@ export const sections: readonly Section[] = [
       {
         method: 'POST',
         path: '/panel/api/server/importDB',
-        summary: 'Restore the panel DB from an uploaded SQLite file (multipart form, field name "db"). The panel restarts after restore. Destructive.',
+        summary: 'Restore the panel DB from an uploaded backup (multipart form, field name "db"). SQLite panels accept a SQLite database (.db) or a SQLite migration dump (.dump); PostgreSQL panels accept a pg_dump archive (.dump), a SQLite database (.db), or a SQLite migration dump. The panel restarts after restore. Destructive.',
         params: [
-          { name: 'db', in: 'body (multipart)', type: 'file', desc: 'SQLite database file to upload.' },
+          { name: 'db', in: 'body (multipart)', type: 'file', desc: 'Database backup or migration file to upload.' },
         ],
       },
       {
@@ -552,7 +564,7 @@ export const sections: readonly Section[] = [
       {
         method: 'GET',
         path: '/panel/api/clients/list/paged',
-        summary: 'Filter, sort, and paginate clients on the server. Each item is a slim row (no uuid/password/auth/flow/security/reverse/tgId) so the clients page can ship 25-ish rows in a few KB instead of the full table. The response also includes a summary computed across the full DB row set so dashboard counters stay stable as the user paginates or filters. Page size capped at 200; fetch /get/:email to obtain the full per-client payload for an edit/info modal.',
+        summary: 'Filter, sort, and paginate clients on the server. Each item is a slim row (no uuid/password/auth/flow/security/reverse/tgId) so the clients page can ship 25-ish rows in a few KB instead of the full table. The response also includes a summary computed across the full DB row set so dashboard counters stay stable as the user paginates or filters: the *Count fields are exact, while the email arrays beside them stop at 200 entries so the payload does not grow with the panel. Page size capped at 200; fetch /get/:email to obtain the full per-client payload for an edit/info modal.',
         params: [
           { name: 'page', in: 'query', type: 'number', desc: '1-indexed page number. Defaults to 1.' },
           { name: 'pageSize', in: 'query', type: 'number', desc: 'Rows per page. Defaults to 25, capped at 200.' },
@@ -563,7 +575,7 @@ export const sections: readonly Section[] = [
           { name: 'order', in: 'query', type: 'string', desc: 'ascend or descend.' },
         ],
         response:
-          '{\n  "success": true,\n  "obj": {\n    "items": [\n      {\n        "email": "alice@example.com",\n        "subId": "abcd1234",\n        "enable": true,\n        "totalGB": 53687091200,\n        "expiryTime": 1735689600000,\n        "limitIp": 0,\n        "reset": 0,\n        "inboundIds": [3, 5],\n        "traffic": { "up": 1024, "down": 4096, "enable": true },\n        "createdAt": 1735000000000,\n        "updatedAt": 1735100000000\n      }\n    ],\n    "total": 2000,\n    "filtered": 47,\n    "page": 1,\n    "pageSize": 25,\n    "summary": {\n      "total": 2000,\n      "active": 1850,\n      "online": ["alice@example.com"],\n      "depleted": [],\n      "expiring": [],\n      "deactive": []\n    }\n  }\n}',
+          '{\n  "success": true,\n  "obj": {\n    "items": [\n      {\n        "email": "alice@example.com",\n        "subId": "abcd1234",\n        "enable": true,\n        "totalGB": 53687091200,\n        "expiryTime": 1735689600000,\n        "limitIp": 0,\n        "reset": 0,\n        "inboundIds": [3, 5],\n        "traffic": { "up": 1024, "down": 4096, "enable": true },\n        "createdAt": 1735000000000,\n        "updatedAt": 1735100000000\n      }\n    ],\n    "total": 2000,\n    "filtered": 47,\n    "page": 1,\n    "pageSize": 25,\n    "summary": {\n      "total": 2000,\n      "active": 1850,\n      "onlineCount": 1,\n      "depletedCount": 0,\n      "expiringCount": 0,\n      "deactiveCount": 150,\n      "online": ["alice@example.com"],\n      "depleted": [],\n      "expiring": [],\n      "deactive": ["bob@example.com"]\n    }\n  }\n}',
       },
       {
         method: 'GET',
@@ -574,6 +586,16 @@ export const sections: readonly Section[] = [
         ],
         response:
           '{\n  "success": true,\n  "obj": {\n    "client": { "id": 1, "email": "alice@example.com", ... },\n    "inboundIds": [3, 5],\n    "externalLinks": [{ "kind": "link", "value": "vless://...", "remark": "DE" }]\n  }\n}',
+      },
+      {
+        method: 'GET',
+        path: '/panel/api/clients/get/tgId/:tgId',
+        summary: 'Fetch clients by Telegram user ID. Returns an array since multiple clients can share the same Telegram ID.',
+        params: [
+          { name: 'tgId', in: 'path', type: 'integer', desc: 'Telegram user ID (numeric).' },
+        ],
+        response:
+          '{\n  "success": true,\n  "obj": [\n    {\n      "client": { "id": 1, "email": "alice@example.com", ... },\n      "inboundIds": [3, 5],\n      "externalLinks": [],\n      "usedTraffic": 1048576\n    }\n  ]\n}',
       },
       {
         method: 'POST',
@@ -898,7 +920,7 @@ export const sections: readonly Section[] = [
         method: 'GET',
         path: '/panel/api/nodes/list',
         summary: 'List every configured node with its connection details, health, and last heartbeat patch.',
-        responseSchema: 'Node',
+        responseSchema: 'NodeView',
         responseSchemaArray: true,
       },
       {
@@ -920,6 +942,7 @@ export const sections: readonly Section[] = [
         params: [
           { name: 'id', in: 'path', type: 'number', desc: 'Node ID.' },
         ],
+        responseSchema: 'NodeView',
       },
       {
         method: 'GET',
@@ -933,18 +956,19 @@ export const sections: readonly Section[] = [
       {
         method: 'POST',
         path: '/panel/api/nodes/add',
-        summary: 'Register a new remote node. Provide its URL, apiToken, and optional remark / allowPrivateAddress flag.',
+        summary: 'Register a new remote node. Provide its URL, write-only apiToken, and optional remark / allowPrivateAddress flag. Responses expose hasApiToken only.',
         body:
-          '{\n  "name": "de-fra-1",\n  "remark": "",\n  "scheme": "https",\n  "address": "node1.example.com",\n  "port": 2053,\n  "basePath": "/",\n  "apiToken": "abcdef...",\n  "enable": true,\n  "allowPrivateAddress": false\n}',
+          '{\n  "name": "de-fra-1",\n  "remark": "",\n  "scheme": "https",\n  "address": "node1.example.com",\n  "port": 2053,\n  "basePath": "/",\n  "apiToken": "abcdef...",\n  "clearApiToken": false,\n  "enable": true,\n  "allowPrivateAddress": false\n}',
+        responseSchema: 'NodeView',
       },
       {
         method: 'POST',
         path: '/panel/api/nodes/update/:id',
-        summary: 'Replace a node\u2019s connection details. Same body shape as /add.',
+        summary: 'Replace a node\u2019s connection details. apiToken is write-only: omit it or send an empty string to keep the stored token; set clearApiToken=true to clear it.',
         params: [
           { name: 'id', in: 'path', type: 'number', desc: 'Node ID.' },
         ],
-        body: '{\n  "name": "de-fra-1",\n  "remark": "",\n  "scheme": "https",\n  "address": "node1.example.com",\n  "port": 2053,\n  "basePath": "/",\n  "apiToken": "abcdef...",\n  "enable": true,\n  "allowPrivateAddress": false\n}',
+        body: '{\n  "name": "de-fra-1",\n  "remark": "",\n  "scheme": "https",\n  "address": "node1.example.com",\n  "port": 2053,\n  "basePath": "/",\n  "apiToken": "",\n  "clearApiToken": false,\n  "enable": true,\n  "allowPrivateAddress": false\n}',
       },
       {
         method: 'POST',
@@ -1022,26 +1046,26 @@ export const sections: readonly Section[] = [
         method: 'GET',
         path: '/panel/api/hosts/list',
         summary: 'List every host across all inbounds, grouped by inbound then ordered by sort order.',
-        responseSchema: 'Host',
+        responseSchema: 'HostGroup',
         responseSchemaArray: true,
       },
       {
         method: 'GET',
-        path: '/panel/api/hosts/get/:id',
-        summary: 'Fetch a single host by ID.',
+        path: '/panel/api/hosts/get/:groupId',
+        summary: 'Fetch a single host group by Group ID.',
         params: [
-          { name: 'id', in: 'path', type: 'number', desc: 'Host ID.' },
+          { name: 'groupId', in: 'path', type: 'string', desc: 'Host Group ID.' },
         ],
-        responseSchema: 'Host',
+        responseSchema: 'HostGroup',
       },
       {
         method: 'GET',
         path: '/panel/api/hosts/byInbound/:inboundId',
-        summary: "Fetch one inbound's hosts, ordered by sort order then id.",
+        summary: "Fetch one inbound's hosts, grouped by host group.",
         params: [
           { name: 'inboundId', in: 'path', type: 'number', desc: 'Inbound ID.' },
         ],
-        responseSchema: 'Host',
+        responseSchema: 'HostGroup',
         responseSchemaArray: true,
       },
       {
@@ -1053,54 +1077,64 @@ export const sections: readonly Section[] = [
       {
         method: 'POST',
         path: '/panel/api/hosts/add',
-        summary: 'Create a host on an inbound. inboundId and remark are required; security defaults to "same" (inherit the inbound).',
-        body: '{\n  "inboundId": 1,\n  "remark": "cdn-front",\n  "address": "cdn.example.com",\n  "port": 8443,\n  "security": "same",\n  "sni": "",\n  "tags": ["CDN"]\n}',
+        summary: 'Create a host group on inbounds.',
+        body: '{\n  "inboundIds": [1],\n  "remark": "cdn-front",\n  "hosts": ["cdn.example.com"],\n  "port": 8443,\n  "security": "same",\n  "tags": ["CDN"]\n}',
         responseSchema: 'Host',
+        responseSchemaArray: true,
       },
       {
         method: 'POST',
-        path: '/panel/api/hosts/update/:id',
-        summary: 'Replace a host’s content. The inbound and sort order are immutable here (use /reorder for ordering).',
+        path: '/panel/api/hosts/update/:groupId',
+        summary: 'Replace a host group’s content.',
         params: [
-          { name: 'id', in: 'path', type: 'number', desc: 'Host ID.' },
+          { name: 'groupId', in: 'path', type: 'string', desc: 'Host Group ID.' },
         ],
-        body: '{\n  "inboundId": 1,\n  "remark": "cdn-front",\n  "address": "cdn.example.com",\n  "port": 8443,\n  "security": "same",\n  "sni": "",\n  "tags": ["CDN"]\n}',
+        body: '{\n  "inboundIds": [1],\n  "remark": "cdn-front",\n  "hosts": ["cdn.example.com"],\n  "port": 8443,\n  "security": "same",\n  "tags": ["CDN"]\n}',
         responseSchema: 'Host',
+        responseSchemaArray: true,
       },
       {
         method: 'POST',
-        path: '/panel/api/hosts/del/:id',
-        summary: 'Delete a host.',
+        path: '/panel/api/hosts/del/:groupId',
+        summary: 'Delete a host group.',
         params: [
-          { name: 'id', in: 'path', type: 'number', desc: 'Host ID.' },
+          { name: 'groupId', in: 'path', type: 'string', desc: 'Host Group ID.' },
         ],
       },
       {
         method: 'POST',
-        path: '/panel/api/hosts/setEnable/:id',
-        summary: 'Enable or disable a single host (disabled hosts are skipped in subscriptions).',
+        path: '/panel/api/hosts/setEnable/:groupId',
+        summary: 'Enable or disable a host group.',
         params: [
-          { name: 'id', in: 'path', type: 'number', desc: 'Host ID.' },
+          { name: 'groupId', in: 'path', type: 'string', desc: 'Host Group ID.' },
         ],
         body: '{\n  "enable": true\n}',
       },
       {
         method: 'POST',
         path: '/panel/api/hosts/reorder',
-        summary: 'Set host sort order by the position of each id in the array.',
-        body: '{\n  "ids": [3, 1, 2]\n}',
+        summary: 'Set host group sort order by the position of each groupId in the array.',
+        body: '{\n  "ids": ["abc-123", "def-456"]\n}',
+      },
+      {
+        method: 'POST',
+        path: '/panel/api/hosts/bulk/add',
+        summary: 'Add a host group to inbounds (same as /add).',
+        body: '{\n  "inboundIds": [1, 2],\n  "hosts": ["cdn.example.com", "cdn2.example.com:443"],\n  "remark": "Cloudflare CDN",\n  "port": 0,\n  "security": "same",\n  "isDisabled": false\n}',
+        responseSchema: 'Host',
+        responseSchemaArray: true,
       },
       {
         method: 'POST',
         path: '/panel/api/hosts/bulk/setEnable',
-        summary: 'Enable or disable many hosts in one call.',
-        body: '{\n  "ids": [1, 2, 3],\n  "enable": false\n}',
+        summary: 'Enable or disable many host groups in one call.',
+        body: '{\n  "ids": ["abc-123", "def-456"],\n  "enable": false\n}',
       },
       {
         method: 'POST',
         path: '/panel/api/hosts/bulk/del',
-        summary: 'Delete many hosts in one call.',
-        body: '{\n  "ids": [1, 2, 3]\n}',
+        summary: 'Delete many host groups in one call.',
+        body: '{\n  "ids": ["abc-123", "def-456"]\n}',
       },
     ],
   },
@@ -1128,7 +1162,7 @@ export const sections: readonly Section[] = [
         method: 'POST',
         path: '/panel/api/setting/all',
         summary: 'Return every panel setting: web server, Telegram bot, subscription, security, LDAP. The full JSON blob that the Settings page edits.',
-        response: '{\n  "success": true,\n  "obj": {\n    "webPort": 2053,\n    "webCertFile": "",\n    "webKeyFile": "",\n    "webBasePath": "/",\n    "subPort": 10882,\n    "subPath": "/sub/",\n    "tgBotEnable": false,\n    "tgBotToken": "",\n    ...\n  }\n}',
+        response: '{\n  "success": true,\n  "obj": {\n    "webPort": 2053,\n    "webCertFile": "",\n    "webKeyFile": "",\n    "webBasePath": "/",\n    "subPort": 10882,\n    "subPath": "/sub/",\n    "subClashAutoDetect": false,\n    "subClashUserAgentRegex": "",\n    "subJsonEnable": false,\n    "subJsonAutoDetect": false,\n    "subJsonAlwaysArray": false,\n    "subJsonUserAgentRegex": "",\n    "subJsonPath": "/json/",\n    "subJsonURI": "https://sub.example.com/json/",\n    "subClashEnable": true,\n    "subClashPath": "/clash/",\n    "subClashURI": "https://sub.example.com/clash/",\n    "tgBotEnable": false,\n    "tgBotToken": "",\n    ...\n  }\n}',
       },
       {
         method: 'POST',
@@ -1137,9 +1171,21 @@ export const sections: readonly Section[] = [
       },
       {
         method: 'POST',
+        path: '/panel/api/setting/factoryDefaults',
+        summary: 'Return the shipped (factory) default value per browser-safe setting key, so clients can tell a stored value apart from the default it would fall back to. Per-install material (secret, panelGuid, mTLS keys) and credential fields are never included.',
+      },
+      {
+        method: 'POST',
         path: '/panel/api/setting/update',
         summary: 'Persist every setting at once. The body mirrors the shape returned by /all. Invalid values (bad ports, missing cert pairs, etc.) are rejected before write.',
-        body: '{\n  "webPort": 2053,\n  "webBasePath": "/",\n  "subPort": 10882,\n  "subPath": "/sub/",\n  "tgBotEnable": false,\n  ...\n}',
+        body: '{\n  "webPort": 2053,\n  "webBasePath": "/",\n  "subPort": 10882,\n  "subPath": "/sub/",\n  "subClashAutoDetect": false,\n  "subClashUserAgentRegex": "",\n  "subJsonEnable": false,\n  "subJsonAutoDetect": false,\n  "subJsonAlwaysArray": false,\n  "subJsonUserAgentRegex": "",\n  "subJsonPath": "/json/",\n  "subJsonURI": "https://sub.example.com/json/",\n  "subClashEnable": true,\n  "subClashPath": "/clash/",\n  "subClashURI": "https://sub.example.com/clash/",\n  "tgBotEnable": false,\n  ...\n}',
+      },
+      {
+        method: 'POST',
+        path: '/panel/api/setting/validateRegex',
+        summary: 'Validate any regular expression with the backend Go RE2 compiler without saving it.',
+        body: '{\n  "regex": "(?m)^general-purpose$"\n}',
+        response: '{\n  "success": true,\n  "msg": ""\n}',
       },
       {
         method: 'POST',
@@ -1298,7 +1344,7 @@ export const sections: readonly Section[] = [
         params: [
           { name: 'outbound', in: 'body (form)', type: 'string', desc: 'JSON-encoded single outbound to test (required).' },
           { name: 'allOutbounds', in: 'body (form)', type: 'string', desc: 'JSON array of all outbounds — used to resolve dialerProxy chains.' },
-          { name: 'mode', in: 'body (form)', type: 'string', desc: '"tcp" for a fast dial-only probe (parallel-safe). Default/empty uses a full HTTP probe through a temp xray instance.' },
+          { name: 'mode', in: 'body (form)', type: 'string', desc: '"tcp" for a fast dial-only probe (parallel-safe), "real" for a real-delay probe whose delay is the full request time including tunnel establishment. Default/empty uses a full HTTP probe reporting the warm per-request round-trip. Both HTTP variants run through a temp xray instance.' },
         ],
         body: 'outbound={"protocol":"freedom","settings":{}}&mode=tcp',
       },
@@ -1309,7 +1355,7 @@ export const sections: readonly Section[] = [
         params: [
           { name: 'outbounds', in: 'body (form)', type: 'string', desc: 'JSON array of outbound configs to test (required).' },
           { name: 'allOutbounds', in: 'body (form)', type: 'string', desc: 'JSON array of all outbounds — used to resolve dialerProxy chains.' },
-          { name: 'mode', in: 'body (form)', type: 'string', desc: '"tcp" for fast dial-only probes (UDP-transport outbounds are still probed over HTTP). Default/empty routes a real HTTP request through each outbound.' },
+          { name: 'mode', in: 'body (form)', type: 'string', desc: '"tcp" for fast dial-only probes (UDP-transport outbounds are still probed over HTTP), "real" for real-delay probes whose delay is the full request time including tunnel establishment. Default/empty routes an HTTP request through each outbound and reports the warm per-request round-trip.' },
         ],
         body: 'outbounds=[{"tag":"direct","protocol":"freedom","settings":{}}]&mode=http',
       },
@@ -1385,7 +1431,7 @@ export const sections: readonly Section[] = [
       {
         method: 'POST',
         path: '/panel/api/xray/outbound-subs/:id/del',
-        summary: 'Delete an outbound subscription by id (POST alias of DELETE for axios-friendly clients).',
+        summary: 'Delete an outbound subscription by id (POST alias of DELETE for clients that cannot send DELETE).',
         params: [
           { name: 'id', in: 'path', type: 'integer', desc: 'Subscription id.' },
         ],
@@ -1437,9 +1483,10 @@ export const sections: readonly Section[] = [
       {
         method: 'GET',
         path: '/{subPath}:subid',
-        summary: 'Return base64-encoded subscription links for all enabled clients matching the subscription ID. When the request has an Accept: text/html header or ?html=1, renders a styled info page instead. Default path: /sub/:subid.',
+        summary: 'Return base64-encoded subscription links for all enabled clients matching the subscription ID. When the request has an Accept: text/html header or ?html=1, renders a styled info page instead. With ?format=info, returns the page view-model as JSON (traffic, expiry, online status; no links) for live polling. Default path: /sub/:subid.',
         params: [
           { name: 'subid', in: 'path', type: 'string', desc: 'Client subscription ID.' },
+          { name: 'format', in: 'query', type: 'string', optional: true, desc: 'Set to "info" to get the subscription status view-model as JSON instead of the links.' },
         ],
       },
       {

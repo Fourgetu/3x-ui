@@ -125,6 +125,20 @@ func hostMuxOverride(ep map[string]any) string {
 // the base stream strips sockopt) and finalMask. No-op for legacy externalProxy
 // entries (which never carry these keys), so existing output is unchanged.
 func applyHostStreamOverrides(ep map[string]any, stream map[string]any) {
+	if hh, ok := ep["hostHeader"].(string); ok && hh != "" {
+		for _, key := range []string{"wsSettings", "httpupgradeSettings", "xhttpSettings"} {
+			if ts, ok := stream[key].(map[string]any); ok && ts != nil {
+				ts["host"] = hh
+			}
+		}
+	}
+	if p, ok := ep["path"].(string); ok && p != "" {
+		for _, key := range []string{"wsSettings", "httpupgradeSettings", "xhttpSettings"} {
+			if ts, ok := stream[key].(map[string]any); ok && ts != nil {
+				ts["path"] = p
+			}
+		}
+	}
 	if sp, ok := ep["sockoptParams"].(string); ok && sp != "" {
 		var sockopt map[string]any
 		if json.Unmarshal([]byte(sp), &sockopt) == nil && len(sockopt) > 0 {
@@ -303,6 +317,44 @@ func applyEndpointAllowInsecure(e ShareEndpoint, params map[string]string, secur
 	if ai, ok := e.ep["allowInsecure"].(bool); ok && ai {
 		params["allowInsecure"] = "1"
 	}
+}
+
+// applyEndpointFinalMask merges a host's Final Mask into the raw link's fm
+// param, mirroring the applyHostStreamOverrides merge on the JSON/Clash path.
+func applyEndpointFinalMask(e ShareEndpoint, params map[string]string) {
+	if merged, ok := endpointFinalMask(e, params["fm"]); ok {
+		params["fm"] = merged
+	}
+}
+
+// applyEndpointFinalMaskObj is applyEndpointFinalMask for the VMess object form.
+func applyEndpointFinalMaskObj(e ShareEndpoint, obj map[string]any) {
+	baseFm, _ := obj["fm"].(string)
+	if merged, ok := endpointFinalMask(e, baseFm); ok {
+		obj["fm"] = merged
+	}
+}
+
+func endpointFinalMask(e ShareEndpoint, baseFm string) (string, bool) {
+	if e.ep == nil {
+		return "", false
+	}
+	fm, ok := e.ep["finalMask"].(string)
+	if !ok || fm == "" {
+		return "", false
+	}
+	var masks map[string]any
+	if json.Unmarshal([]byte(fm), &masks) != nil || len(masks) == 0 {
+		return "", false
+	}
+	var base any
+	if baseFm != "" {
+		var baseMap map[string]any
+		if json.Unmarshal([]byte(baseFm), &baseMap) == nil {
+			base = baseMap
+		}
+	}
+	return marshalFinalMask(mergeFinalMask(base, masks))
 }
 
 // applyEndpointHostPathObj is applyEndpointHostPath for the VMess object form.

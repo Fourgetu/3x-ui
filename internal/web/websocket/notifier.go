@@ -45,10 +45,11 @@ func BroadcastTraffic(traffic any) {
 	}
 }
 
-// BroadcastClientStats broadcasts absolute per-client traffic counters for the
-// clients that had activity in the latest collection window. Use this instead
-// of re-broadcasting the full inbound list — it scales to 10k+ clients because
-// the payload only includes active rows (typically a fraction of total).
+// BroadcastClientStats broadcasts absolute per-client traffic counters. Small
+// installs send the complete row set each cycle (payload key snapshot=true);
+// above the traffic job's snapshot threshold only the rows active in the
+// latest collection window are sent (snapshot=false), which keeps the payload
+// under the hub's cap at any client count.
 func BroadcastClientStats(stats any) {
 	if hub := GetHub(); hub != nil {
 		hub.Broadcast(MessageTypeClientStats, stats)
@@ -62,9 +63,6 @@ func BroadcastInbounds(inbounds any) {
 	}
 }
 
-// BroadcastNodes broadcasts the fresh node list to all connected clients.
-// Pushed by NodeHeartbeatJob at the end of each 10s tick so the Nodes page
-// reflects status / latency / cpu / mem updates without polling.
 func BroadcastNodes(nodes any) {
 	if hub := GetHub(); hub != nil {
 		hub.Broadcast(MessageTypeNodes, nodes)

@@ -66,8 +66,7 @@ func GetIPLimitBannedPrevLogPath() string {
 	return config.GetLogFolder() + "/3xipl-banned.prev.log"
 }
 
-// GetAccessLogPath reads the Xray config and returns the access log file path.
-func GetAccessLogPath() (string, error) {
+func getLogPath(key string) (string, error) {
 	config, err := os.ReadFile(GetConfigPath())
 	if err != nil {
 		logger.Warningf("Failed to read configuration file: %s", err)
@@ -81,14 +80,23 @@ func GetAccessLogPath() (string, error) {
 		return "", err
 	}
 
-	if jsonConfig["log"] != nil {
-		jsonLog := jsonConfig["log"].(map[string]any)
-		if jsonLog["access"] != nil {
-			accessLogPath := jsonLog["access"].(string)
-			return accessLogPath, nil
+	if jsonLog, ok := jsonConfig["log"].(map[string]any); ok {
+		if logPath, ok := jsonLog[key].(string); ok {
+			return logPath, nil
 		}
 	}
 	return "", err
+}
+
+// GetAccessLogPath reads the Xray config and returns the access log file path.
+func GetAccessLogPath() (string, error) {
+	return getLogPath("access")
+}
+
+// GetErrorLogPath reads the Xray config and returns the error log file path.
+// GetErrorLogPath reads the Xray config and returns the error log file path.
+func GetErrorLogPath() (string, error) {
+	return getLogPath("error")
 }
 
 // stopProcess calls Stop on the given Process instance.
@@ -118,11 +126,13 @@ func NewTestProcess(xrayConfig *Config, configPath string) *Process {
 }
 
 type process struct {
-	// mu guards the process lifecycle fields (cmd, done, exitErr) which are
-	// written by Start/startCommand and the waitForCommand goroutine while being
-	// read concurrently by IsRunning/GetErr/GetResult/Stop from other goroutines
-	// (status endpoint, check-xray-running job). Snapshot under the lock, then do
-	// any blocking syscall (Wait/Signal/Kill) on the local copy without holding it.
+	// mu guards the process lifecycle fields (cmd, done, exitErr) plus version,
+	// apiPort, and config, which are written by Start/startCommand/refreshVersion/
+	// refreshAPIPort/SetConfig
+	// while being read concurrently by IsRunning/GetErr/GetResult/GetXrayVersion/
+	// GetAPIPort/Stop from other goroutines (status endpoint, check-xray-running
+	// and traffic jobs). Snapshot under the lock, then do any blocking syscall
+	// (Wait/Signal/Kill) on the local copy without holding it.
 	mu   sync.RWMutex
 	cmd  *exec.Cmd
 	done chan struct{}
@@ -210,6 +220,7 @@ func (p *process) SetOnlineAPISupport(v OnlineAPISupport) {
 var (
 	xrayGracefulStopTimeout = 5 * time.Second
 	xrayForceStopTimeout    = 2 * time.Second
+	xrayVersionTimeout      = 5 * time.Second
 	// OnCrash is called when xray crashes unexpectedly. Set from web layer.
 	OnCrash func(err error)
 )
@@ -273,16 +284,22 @@ func (p *process) GetResult() string {
 
 // GetXrayVersion returns the version string of the Xray process.
 func (p *process) GetXrayVersion() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	return p.version
 }
 
 // GetAPIPort returns the API port used by the Xray process.
 func (p *Process) GetAPIPort() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	return p.apiPort
 }
 
 // GetConfig returns the configuration used by the Xray process.
 func (p *Process) GetConfig() *Config {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	return p.config
 }
 
@@ -290,6 +307,8 @@ func (p *Process) GetConfig() *Config {
 // process has been reconciled with it through the gRPC API (hot apply), so
 // later change detection compares against what is actually running.
 func (p *Process) SetConfig(config *Config) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.config = config
 }
 
@@ -466,28 +485,32 @@ func (p *Process) GetUptime() uint64 {
 
 // refreshAPIPort updates the API port from the inbound configs.
 func (p *process) refreshAPIPort() {
+	port := 0
 	for _, inbound := range p.config.InboundConfigs {
 		if inbound.Tag == "api" {
-			p.apiPort = inbound.Port
+			port = inbound.Port
 			break
 		}
 	}
+	p.mu.Lock()
+	p.apiPort = port
+	p.mu.Unlock()
 }
 
 // refreshVersion updates the version string by running the Xray binary with -version.
 func (p *process) refreshVersion() {
-	cmd := exec.CommandContext(context.Background(), GetBinaryPath(), "-version")
-	data, err := cmd.Output()
-	if err != nil {
-		p.version = "Unknown"
-	} else {
-		datas := bytes.Split(data, []byte(" "))
-		if len(datas) <= 1 {
-			p.version = "Unknown"
-		} else {
-			p.version = string(datas[1])
+	version := "Unknown"
+	ctx, cancel := context.WithTimeout(context.Background(), xrayVersionTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, GetBinaryPath(), "-version")
+	if data, err := cmd.Output(); err == nil {
+		if datas := bytes.Split(data, []byte(" ")); len(datas) > 1 {
+			version = string(datas[1])
 		}
 	}
+	p.mu.Lock()
+	p.version = version
+	p.mu.Unlock()
 }
 
 // Start launches the Xray process with the current configuration.

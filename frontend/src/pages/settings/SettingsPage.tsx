@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import {
   Alert,
   Button,
@@ -204,7 +204,7 @@ export default function SettingsPage() {
       case 'subscription-formats': return <SubscriptionFormatsTab allSetting={allSetting} updateSetting={updateSetting} />;
       default: return <GeneralTab allSetting={allSetting} updateSetting={updateSetting} />;
     }
-  }, [activeSlug, allSetting, updateSetting]);
+  }, [activeSlug, allSetting, updateSetting, savePayload]);
 
   return (
     <ConfigProvider theme={antdThemeConfig}>

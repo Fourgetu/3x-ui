@@ -1,4 +1,4 @@
-import { lazy, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Badge,
@@ -16,7 +16,6 @@ import {
   Result,
   Row,
   Select,
-  Space,
   Spin,
   Statistic,
   Switch,
@@ -61,10 +60,13 @@ import { useNodesQuery } from '@/api/queries/useNodesQuery';
 import { useDatepicker } from '@/hooks/useDatepicker';
 import type { ClientRecord, InboundOption, ExternalLink, ExternalLinkInput } from '@/hooks/useClients';
 import ClientTrafficCell from '@/components/clients/ClientTrafficCell';
+import ClientSpeedTag, { isActiveSpeed } from '@/components/clients/ClientSpeedTag';
+import ClientCardComment from '@/components/clients/ClientCardComment';
 import AppSidebar from '@/layouts/AppSidebar';
 import { IntlUtil, SizeFormatter } from '@/utils';
 import { setMessageInstance } from '@/utils/messageBus';
 import { LazyMount } from '@/components/utility';
+import { SPEED_COLUMN_WIDTH, SPEED_TAG_CLASS_NAME, SPEED_TAG_STYLE } from '@/components/utility/speedTagStyle';
 const ClientFormModal = lazy(() => import('./ClientFormModal'));
 const ClientInfoModal = lazy(() => import('./ClientInfoModal'));
 const ClientQrModal = lazy(() => import('./ClientQrModal'));
@@ -77,12 +79,14 @@ const BulkAttachInboundsModal = lazy(() => import('./BulkAttachInboundsModal'));
 const BulkDetachInboundsModal = lazy(() => import('./BulkDetachInboundsModal'));
 const TextModal = lazy(() => import('@/components/feedback/TextModal'));
 const PromptModal = lazy(() => import('@/components/feedback/PromptModal'));
+import { ClientInboundChips, ClientRowActions } from './RowCells';
 import { emptyFilters, activeFilterCount } from './filters';
 import type { ClientFilters } from './filters';
 import './ClientsPage.css';
 
 const FILTER_STATE_KEY = 'clientsFilterState';
 const DISABLED_PAGE_SIZE = 200;
+const DEFAULT_TABLE_PAGE_SIZE = 25;
 
 function UngroupIcon() {
   return (
@@ -123,12 +127,29 @@ function UngroupIcon() {
   );
 }
 
+// The server sends exact counters but caps the email arrays behind them, so a
+// panel with thousands of depleted clients neither ships nor renders them all.
+// The trailing chip reports what the popover left out.
+function ClientEmailList({ emails, total }: { emails: string[]; total: number }) {
+  const hidden = total - emails.length;
+  return (
+    <div className="client-email-list">
+      {emails.map((e) => <div key={e}>{e}</div>)}
+      {hidden > 0 && <div className="client-email-more">+{hidden}</div>}
+    </div>
+  );
+}
+
 type Bucket = 'active' | 'deactive' | 'depleted' | 'expiring';
 
 interface PersistedFilterState {
   searchKey: string;
   filters: ClientFilters;
   sort: string;
+  // The page size resolved on the previous visit. Without it the first list
+  // request has to wait for /setting/defaultSettings just to learn how many rows
+  // to ask for, which serialises two round trips on every load.
+  pageSize: number | null;
 }
 
 const INBOUND_PROTOCOL_COLORS: Record<string, string> = {
@@ -144,6 +165,9 @@ const INBOUND_PROTOCOL_COLORS: Record<string, string> = {
   tunnel: 'orange',
 };
 const INBOUND_CHIP_LIMIT = 1;
+// A shared empty array keeps the memoised chip cell from seeing a fresh prop for
+// every unattached client on every render.
+const EMPTY_INBOUND_IDS: number[] = [];
 
 function readFilterState(): PersistedFilterState {
   try {
@@ -161,9 +185,10 @@ function readFilterState(): PersistedFilterState {
         groups: Array.isArray(fromRaw.groups) ? fromRaw.groups : [],
       },
       sort: typeof raw.sort === 'string' ? raw.sort : '',
+      pageSize: typeof raw.pageSize === 'number' && raw.pageSize > 0 ? raw.pageSize : null,
     };
   } catch {
-    return { searchKey: '', filters: emptyFilters(), sort: '' };
+    return { searchKey: '', filters: emptyFilters(), sort: '', pageSize: null };
   }
 }
 
@@ -202,13 +227,14 @@ export default function ClientsPage() {
 
   const {
     clients, total, filtered,
-    summary: serverSummary,
+    summary,
     allGroups,
     setQuery,
-    inbounds, onlines, loading, transitioning, fetched, fetchError, subSettings,
-    tgBotEnable, expireDiff, trafficDiff, pageSize,
+    inbounds, onlines, transitioning, fetched, fetchError, subSettings,
+    tgBotEnable, expireDiff, trafficDiff, pageSize, settingsReady,
     create, update, remove, bulkDelete, bulkAdjust, bulkEnable, bulkDisable, bulkAddToGroup, bulkRemoveFromGroup, attach, setExternalLinks, bulkAttach, detach, bulkDetach,
     resetTraffic, resetAllTraffics, delDepleted, delOrphans, exportClients, importClients, setEnable,
+    clientSpeed,
     applyTrafficEvent, applyClientStatsEvent,
     refresh,
     hydrate,
@@ -261,14 +287,31 @@ export default function ClientsPage() {
   const [sortColumn, setSortColumn] = useState<string | null>(initialSort.column);
   const [sortOrder, setSortOrder] = useState<'ascend' | 'descend' | null>(initialSort.order);
   const [currentPage, setCurrentPage] = useState(1);
-  const [tablePageSize, setTablePageSize] = useState(25);
+  // Derived, not mirrored into state by an effect: an effect lags one render
+  // behind the settings arriving, and that lag is what made the page fetch the
+  // list once with the placeholder size and again with the real one.
+  const [pageSizeChoice, setPageSizeChoice] = useState<number | null>(null);
+  const settingsPageSize = settingsReady ? (pageSize > 0 ? pageSize : DISABLED_PAGE_SIZE) : null;
+  // Last visit's resolved size stands in until the settings land, so the list
+  // request goes out with the page mount instead of queueing behind them. If the
+  // admin has since changed the setting the authoritative value replaces it and
+  // costs one refetch — only on the load that follows the change. Null means
+  // nothing is known yet, which is the one case worth waiting for.
+  const resolvedPageSize = pageSizeChoice ?? settingsPageSize ?? initial.pageSize;
+  const tablePageSize = resolvedPageSize ?? DEFAULT_TABLE_PAGE_SIZE;
   // debouncedSearch lags behind the input so we don't spam the server on every
   // keystroke; the search box still feels instant locally.
   const [debouncedSearch, setDebouncedSearch] = useState(searchKey);
 
   useEffect(() => {
-    localStorage.setItem(FILTER_STATE_KEY, JSON.stringify({ searchKey, filters, sort: sortValueFor(sortColumn, sortOrder) }));
-  }, [searchKey, filters, sortColumn, sortOrder]);
+    localStorage.setItem(FILTER_STATE_KEY, JSON.stringify({
+      searchKey,
+      filters,
+      sort: sortValueFor(sortColumn, sortOrder),
+      // Only ever persist a size we actually resolved, never the render fallback.
+      pageSize: resolvedPageSize,
+    }));
+  }, [searchKey, filters, sortColumn, sortOrder, resolvedPageSize]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => setDebouncedSearch(searchKey), 300);
@@ -299,6 +342,10 @@ export default function ClientsPage() {
   }, [filters.nodeIds, filters.inboundIds, inbounds]);
 
   useEffect(() => {
+    // With no remembered size and no settings yet, any query we build would be a
+    // guess, and issuing it costs a full server round trip that is thrown away as
+    // soon as the real size arrives.
+    if (resolvedPageSize === null) return;
     setQuery({
       page: currentPage,
       pageSize: tablePageSize,
@@ -317,13 +364,21 @@ export default function ClientsPage() {
       sort: sortColumn || undefined,
       order: sortOrder || undefined,
     });
-  }, [setQuery, currentPage, tablePageSize, debouncedSearch, filters, effectiveInboundCsv, sortColumn, sortOrder]);
+  }, [setQuery, resolvedPageSize, currentPage, tablePageSize, debouncedSearch, filters, effectiveInboundCsv, sortColumn, sortOrder]);
 
   const activeCount = activeFilterCount(filters);
 
-  useEffect(() => {
-    setTablePageSize(pageSize > 0 ? pageSize : DISABLED_PAGE_SIZE);
-  }, [pageSize]);
+  // Row handlers take an email and look the row up here at call time. Keying
+  // them on the record object instead would defeat the memoised cells: every
+  // traffic push replaces the row object of every client whose counters moved,
+  // so the memo would miss on exactly the rows that are busy. Reading through
+  // the ref also means a modal opened mid-poll shows current usage.
+  const rowsByEmail = useRef(new Map<string, ClientRecord>());
+  rowsByEmail.current = useMemo(() => {
+    const map = new Map<string, ClientRecord>();
+    for (const c of clients) map.set(c.email, c);
+    return map;
+  }, [clients]);
 
   const onlineSet = useMemo(() => new Set(onlines || []), [onlines]);
   const inboundsById = useMemo(() => {
@@ -401,9 +456,6 @@ export default function ClientsPage() {
   // a rename.
   const filteredClients = clients;
 
-  // Server-computed counts that stay stable as the user paginates/filters.
-  const summary = serverSummary;
-
   // Sort is server-side now; the page already arrives in the requested
   // order, so we just hand it through.
   const sortedClients = filteredClients;
@@ -473,7 +525,9 @@ export default function ClientsPage() {
     setFormOpen(true);
   }
 
-  async function onEdit(row: ClientRecord) {
+  const onEdit = useCallback(async (email: string) => {
+    const row = rowsByEmail.current.get(email);
+    if (!row) return;
     setFormMode('edit');
     // Paged list omits per-client secrets to keep the row payload tiny;
     // edit needs them, so fetch the full record first.
@@ -484,9 +538,11 @@ export default function ClientsPage() {
     setEditingAttachedIds([...ids]);
     setEditingExternalLinks(Array.isArray(full?.externalLinks) ? [...full.externalLinks] : []);
     setFormOpen(true);
-  }
+  }, [hydrate]);
 
-  function onDelete(row: ClientRecord) {
+  const onDelete = useCallback((email: string) => {
+    const row = rowsByEmail.current.get(email);
+    if (!row) return;
     modal.confirm({
       title: t('pages.clients.deleteConfirmTitle', { email: row.email }),
       content: t('pages.clients.deleteConfirmContent'),
@@ -498,9 +554,10 @@ export default function ClientsPage() {
         if (msg?.success) messageApi.success(t('pages.clients.toasts.deleted'));
       },
     });
-  }
+  }, [modal, t, remove, messageApi]);
 
-  function onResetTraffic(row: ClientRecord) {
+  const onResetTraffic = useCallback((email: string) => {
+    const row = rowsByEmail.current.get(email);
     if (!row?.email) {
       messageApi.warning(t('pages.clients.resetNotPossible'));
       return;
@@ -515,19 +572,33 @@ export default function ClientsPage() {
         if (msg?.success) messageApi.success(t('pages.clients.toasts.trafficReset'));
       },
     });
-  }
+  }, [modal, t, resetTraffic, messageApi]);
 
-  async function onShowInfo(row: ClientRecord) {
+  const onShowInfo = useCallback(async (email: string) => {
+    const row = rowsByEmail.current.get(email);
+    if (!row) return;
     const full = await hydrate(row.email);
     setInfoClient(full ? { ...row, ...full.client, inboundIds: full.inboundIds } : row);
     setInfoOpen(true);
-  }
+  }, [hydrate]);
 
-  async function onShowQr(row: ClientRecord) {
+  const onShowQr = useCallback(async (email: string) => {
+    const row = rowsByEmail.current.get(email);
+    if (!row) return;
     const full = await hydrate(row.email);
     setQrClient(full ? { ...row, ...full.client, inboundIds: full.inboundIds } : row);
     setQrOpen(true);
-  }
+  }, [hydrate]);
+
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefreshClick = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refresh]);
 
   const openText = useCallback((opts: { title: string; content: string; fileName?: string }) => {
     setTextTitle(opts.title);
@@ -762,7 +833,7 @@ export default function ClientsPage() {
 
   const onTableChange: NonNullable<TableProps<ClientRecord>['onChange']> = (pag) => {
     if (pag?.current) setCurrentPage(pag.current);
-    if (pag?.pageSize) setTablePageSize(pag.pageSize);
+    if (pag?.pageSize) setPageSizeChoice(pag.pageSize);
   };
 
   const columns = useMemo<ColumnsType<ClientRecord>>(() => [
@@ -771,23 +842,14 @@ export default function ClientsPage() {
       key: 'actions',
       width: 200,
       render: (_v, record) => (
-        <Space size={4}>
-          <Tooltip title={t('pages.clients.qrCode')}>
-            <Button size="small" type="text" style={{ fontSize: 16 }} icon={<QrcodeOutlined />} aria-label={t('pages.clients.qrCode')} onClick={() => onShowQr(record)} />
-          </Tooltip>
-          <Tooltip title={t('pages.clients.clientInfo')}>
-            <Button size="small" type="text" style={{ fontSize: 16 }} icon={<InfoCircleOutlined />} aria-label={t('pages.clients.clientInfo')} onClick={() => onShowInfo(record)} />
-          </Tooltip>
-          <Tooltip title={t('pages.inbounds.resetTraffic')}>
-            <Button size="small" type="text" style={{ fontSize: 16 }} icon={<RetweetOutlined />} aria-label={t('pages.inbounds.resetTraffic')} onClick={() => onResetTraffic(record)} />
-          </Tooltip>
-          <Tooltip title={t('edit')}>
-            <Button size="small" type="text" style={{ fontSize: 16 }} icon={<EditOutlined />} aria-label={t('edit')} onClick={() => onEdit(record)} />
-          </Tooltip>
-          <Tooltip title={t('delete')}>
-            <Button size="small" type="text" danger style={{ fontSize: 16 }} icon={<DeleteOutlined />} aria-label={t('delete')} onClick={() => onDelete(record)} />
-          </Tooltip>
-        </Space>
+        <ClientRowActions
+          email={record.email}
+          onShowQr={onShowQr}
+          onShowInfo={onShowInfo}
+          onResetTraffic={onResetTraffic}
+          onEdit={onEdit}
+          onDelete={onDelete}
+        />
       ),
     },
     {
@@ -836,7 +898,7 @@ export default function ClientsPage() {
         <div className="email-cell">
           <span className="email">{record.email}</span>
           {record.subId && <span className="sub" title={record.subId}>{record.subId}</span>}
-          {record.comment && <span className="sub" title={record.comment}>{record.comment}</span>}
+          <ClientCardComment comment={record.comment} className="sub" />
         </div>
       ),
     },
@@ -869,44 +931,16 @@ export default function ClientsPage() {
       key: 'inboundIds',
       width: 210,
       render: (_v, record) => {
-        const ids = record.inboundIds || [];
-        if (ids.length === 0) return <span style={{ color: 'rgba(0,0,0,0.45)' }}>—</span>;
-        const visible = ids.slice(0, INBOUND_CHIP_LIMIT);
-        const overflow = ids.slice(INBOUND_CHIP_LIMIT);
-        const chip = (id: number, compact: boolean) => {
-          const ib = inboundsById[id];
-          const proto = (ib?.protocol || '').toLowerCase();
-          const color = INBOUND_PROTOCOL_COLORS[proto] ?? 'default';
-          const compactLabel = formatInboundLabel(ib?.tag, ib?.remark, ib?.port);
-          const nodeLabel = inboundNodeLabel(id);
-          return (
-            <Tooltip key={id} title={inboundFullLabel(id)}>
-              <Tag color={color} className="client-inbound-chip">
-                {nodeLabel && <span className="client-inbound-node">{nodeLabel}</span>}
-                <span className="client-inbound-name">{compact ? compactLabel : inboundLabel(id)}</span>
-              </Tag>
-            </Tooltip>
-          );
-        };
         return (
-          <>
-            {visible.map((id) => chip(id, true))}
-            {overflow.length > 0 && (
-              <Popover
-                trigger="click"
-                placement="bottomRight"
-                content={
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxWidth: 280, maxHeight: 280, overflowY: 'auto' }}>
-                    {overflow.map((id) => chip(id, false))}
-                  </div>
-                }
-              >
-                <Tag color="default" style={{ margin: 2, cursor: 'pointer' }}>
-                  +{overflow.length}
-                </Tag>
-              </Popover>
-            )}
-          </>
+          <ClientInboundChips
+            ids={record.inboundIds || EMPTY_INBOUND_IDS}
+            inboundsById={inboundsById}
+            protocolColors={INBOUND_PROTOCOL_COLORS}
+            chipLimit={INBOUND_CHIP_LIMIT}
+            labelForId={inboundLabel}
+            titleForId={inboundFullLabel}
+            nodeLabelForId={inboundNodeLabel}
+          />
         );
       },
     },
@@ -925,6 +959,19 @@ export default function ClientsPage() {
       ),
     },
     {
+      title: t('pages.clients.speed'),
+      key: 'speed',
+      width: SPEED_COLUMN_WIDTH,
+      align: 'center',
+      render: (_v, record) => {
+        const speed = clientSpeed[record.email];
+        if (!isActiveSpeed(speed)) {
+          return <Tag color="default" className={SPEED_TAG_CLASS_NAME} style={SPEED_TAG_STYLE}>—</Tag>;
+        }
+        return <ClientSpeedTag speed={speed} tableCell />;
+      },
+    },
+    {
       title: t('pages.clients.remaining'),
       key: 'remaining',
       width: 130,
@@ -941,7 +988,7 @@ export default function ClientsPage() {
       ),
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [t, togglingEmail, clientBucket, isOnline, inboundsById, nodesById, filters, allGroups, datepicker, trafficDiff]);
+  ], [t, togglingEmail, clientBucket, isOnline, inboundsById, nodesById, filters, allGroups, datepicker, trafficDiff, clientSpeed]);
 
   const tablePagination = {
     current: currentPage,
@@ -1002,7 +1049,7 @@ export default function ClientsPage() {
                   status="error"
                   title={t('somethingWentWrong')}
                   subTitle={fetchError}
-                  extra={<Button type="primary" loading={loading} onClick={refresh}>{t('refresh')}</Button>}
+                  extra={<Button type="primary" loading={refreshing} onClick={onRefreshClick}>{t('refresh')}</Button>}
                 />
               ) : (
                 <Row gutter={[isMobile ? 8 : 16, isMobile ? 8 : 12]}>
@@ -1015,37 +1062,37 @@ export default function ClientsPage() {
                         <Col xs={12} sm={8} md={4}>
                           <Popover
                             title={t('online')}
-                            open={summary.online.length ? undefined : false}
-                            content={<div className="client-email-list">{summary.online.map((e) => <div key={e}>{e}</div>)}</div>}
+                            open={summary.onlineCount ? undefined : false}
+                            content={<ClientEmailList emails={summary.online} total={summary.onlineCount} />}
                           >
-                            <Statistic title={t('online')} value={String(summary.online.length)} prefix={<span className="dot dot-blue" />} />
+                            <Statistic title={t('online')} value={String(summary.onlineCount)} prefix={<span className="dot dot-blue" />} />
                           </Popover>
                         </Col>
                         <Col xs={12} sm={8} md={4}>
                           <Popover
                             title={t('depleted')}
-                            open={summary.depleted.length ? undefined : false}
-                            content={<div className="client-email-list">{summary.depleted.map((e) => <div key={e}>{e}</div>)}</div>}
+                            open={summary.depletedCount ? undefined : false}
+                            content={<ClientEmailList emails={summary.depleted} total={summary.depletedCount} />}
                           >
-                            <Statistic title={t('depleted')} value={String(summary.depleted.length)} prefix={<span className="dot dot-red" />} />
+                            <Statistic title={t('depleted')} value={String(summary.depletedCount)} prefix={<span className="dot dot-red" />} />
                           </Popover>
                         </Col>
                         <Col xs={12} sm={8} md={4}>
                           <Popover
                             title={t('depletingSoon')}
-                            open={summary.expiring.length ? undefined : false}
-                            content={<div className="client-email-list">{summary.expiring.map((e) => <div key={e}>{e}</div>)}</div>}
+                            open={summary.expiringCount ? undefined : false}
+                            content={<ClientEmailList emails={summary.expiring} total={summary.expiringCount} />}
                           >
-                            <Statistic title={t('depletingSoon')} value={String(summary.expiring.length)} prefix={<span className="dot dot-orange" />} />
+                            <Statistic title={t('depletingSoon')} value={String(summary.expiringCount)} prefix={<span className="dot dot-orange" />} />
                           </Popover>
                         </Col>
                         <Col xs={12} sm={8} md={4}>
                           <Popover
                             title={t('disabled')}
-                            open={summary.deactive.length ? undefined : false}
-                            content={<div className="client-email-list">{summary.deactive.map((e) => <div key={e}>{e}</div>)}</div>}
+                            open={summary.deactiveCount ? undefined : false}
+                            content={<ClientEmailList emails={summary.deactive} total={summary.deactiveCount} />}
                           >
-                            <Statistic title={t('disabled')} value={String(summary.deactive.length)} prefix={<span className="dot dot-gray" />} />
+                            <Statistic title={t('disabled')} value={String(summary.deactiveCount)} prefix={<span className="dot dot-gray" />} />
                           </Popover>
                         </Col>
                         <Col xs={12} sm={8} md={4}>
@@ -1221,7 +1268,7 @@ export default function ClientsPage() {
                           value={sortValueFor(sortColumn, sortOrder)}
                           aria-label={t('sort')}
                           size={isMobile ? 'small' : 'middle'}
-                          suffixIcon={<SortAscendingOutlined />}
+                          suffix={<SortAscendingOutlined />}
                           style={{ minWidth: isMobile ? 130 : 200 }}
                           onChange={(value) => {
                             const opt = SORT_OPTIONS.find((o) => o.value === value);
@@ -1372,7 +1419,7 @@ export default function ClientsPage() {
                                   showTotal={(n) => `${n}`}
                                   onChange={(p, s) => {
                                     setCurrentPage(p);
-                                    if (s && s !== tablePageSize) setTablePageSize(s);
+                                    if (s && s !== tablePageSize) setPageSizeChoice(s);
                                   }}
                                 />
                               </div>
@@ -1399,8 +1446,8 @@ export default function ClientsPage() {
                                           role="button"
                                           tabIndex={0}
                                           aria-label={t('pages.clients.clientInfo')}
-                                          onClick={() => onShowInfo(row)}
-                                          onKeyDown={activateOnKey(() => onShowInfo(row))}
+                                          onClick={() => onShowInfo(row.email)}
+                                          onKeyDown={activateOnKey(() => onShowInfo(row.email))}
                                         />
                                       </Tooltip>
                                       <Switch
@@ -1417,23 +1464,23 @@ export default function ClientsPage() {
                                             {
                                               key: 'qr',
                                               label: <><QrcodeOutlined /> {t('pages.clients.qrCode')}</>,
-                                              onClick: () => onShowQr(row),
+                                              onClick: () => onShowQr(row.email),
                                             },
                                             {
                                               key: 'reset',
                                               label: <><RetweetOutlined /> {t('pages.inbounds.resetTraffic')}</>,
-                                              onClick: () => onResetTraffic(row),
+                                              onClick: () => onResetTraffic(row.email),
                                             },
                                             {
                                               key: 'edit',
                                               label: <><EditOutlined /> {t('edit')}</>,
-                                              onClick: () => onEdit(row),
+                                              onClick: () => onEdit(row.email),
                                             },
                                             {
                                               key: 'delete',
                                               danger: true,
                                               label: <><DeleteOutlined /> {t('delete')}</>,
-                                              onClick: () => onDelete(row),
+                                              onClick: () => onDelete(row.email),
                                             },
                                           ],
                                         }}
@@ -1442,6 +1489,7 @@ export default function ClientsPage() {
                                       </Dropdown>
                                     </div>
                                   </div>
+                                  <ClientCardComment comment={row.comment} />
                                   <ClientTrafficCell
                                     compact
                                     up={row.traffic?.up}
@@ -1450,6 +1498,15 @@ export default function ClientsPage() {
                                     enabled={row.enable}
                                     trafficDiff={trafficDiff}
                                   />
+                                  {(() => {
+                                    const speed = clientSpeed[row.email];
+                                    if (!isActiveSpeed(speed)) return null;
+                                    return (
+                                      <div className="client-card-speed">
+                                        <ClientSpeedTag speed={speed} />
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
                               );
                             })}

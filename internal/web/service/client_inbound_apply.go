@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -17,6 +18,28 @@ import (
 
 	"gorm.io/gorm"
 )
+
+func sameClientConfigExceptUpdatedAt(a, b map[string]any) bool {
+	aa := maps.Clone(a)
+	bb := maps.Clone(b)
+	delete(aa, "updated_at")
+	delete(bb, "updated_at")
+	an, aerr := json.Marshal(aa)
+	bn, berr := json.Marshal(bb)
+	return aerr == nil && berr == nil && string(an) == string(bn)
+}
+
+// advancePushedInbound advances the node's reconcile-skip fingerprint from the
+// pre-edit settings to the saved ones after every per-client push succeeded.
+func advancePushedInbound(rt runtime.Runtime, prevSettings string, ib *model.Inbound) {
+	rem, ok := rt.(*runtime.Remote)
+	if !ok {
+		return
+	}
+	prev := *ib
+	prev.Settings = prevSettings
+	rem.AdvancePushedInbound(&prev, ib)
+}
 
 // delInboundClients removes several clients from a single inbound in one pass:
 // one settings rewrite, one runtime sweep, one Save and one SyncInbound for the
@@ -89,6 +112,7 @@ func (s *ClientService) delInboundClients(inboundSvc *InboundService, inboundId 
 	if err != nil {
 		return false, err
 	}
+	prevSettings := oldInbound.Settings
 	oldInbound.Settings = string(newSettings)
 
 	var sharedSet map[string]bool
@@ -185,6 +209,7 @@ func (s *ClientService) delInboundClients(inboundSvc *InboundService, inboundId 
 
 	// Apply runtime deletes after commit — outside the serialized writer so a
 	// slow node call can't stall traffic accounting.
+	nodePushFailed := false
 	for _, t := range targets {
 		if len(t.email) == 0 {
 			continue
@@ -203,8 +228,12 @@ func (s *ClientService) delInboundClients(inboundSvc *InboundService, inboundId 
 		} else if nodePush {
 			if err1 := nodeRt.DeleteUser(context.Background(), oldInbound, t.email); err1 != nil {
 				logger.Warning("Error in deleting client on", nodeRt.Name(), ":", err1)
+				nodePushFailed = true
 			}
 		}
+	}
+	if nodePush && !nodePushFailed {
+		advancePushedInbound(nodeRt, prevSettings, oldInbound)
 	}
 
 	return needRestart, nil
@@ -290,12 +319,46 @@ func (s *ClientService) addInboundClient(inboundSvc *InboundService, data *model
 		return false, err
 	}
 
-	if oldInbound.Protocol == model.WireGuard {
-		existing, gcErr := inboundSvc.GetClients(oldInbound)
-		if gcErr != nil {
-			return false, gcErr
+	existingClients, err := inboundSvc.GetClients(oldInbound)
+	if err != nil {
+		return false, err
+	}
+
+	// A client already on this inbound is skipped instead of appended again:
+	// checkEmailsExistForClients exempts a matching subId so one identity can
+	// live on several inbounds, which let retried or raced adds duplicate the
+	// same email inside a single settings array (#5770). clients and
+	// interfaceClients are parsed from the same data.Settings array, so they
+	// stay index-aligned while filtering.
+	if len(existingClients) > 0 && len(clients) > 0 {
+		existingEmails := make(map[string]struct{}, len(existingClients))
+		for _, c := range existingClients {
+			if c.Email != "" {
+				existingEmails[strings.ToLower(c.Email)] = struct{}{}
+			}
 		}
-		if dErr := defaultWireguardClients(existing, clients, interfaceClients); dErr != nil {
+		keptClients := make([]model.Client, 0, len(clients))
+		keptWire := make([]any, 0, len(interfaceClients))
+		for i, c := range clients {
+			if c.Email != "" {
+				if _, dup := existingEmails[strings.ToLower(c.Email)]; dup {
+					continue
+				}
+			}
+			keptClients = append(keptClients, c)
+			if i < len(interfaceClients) {
+				keptWire = append(keptWire, interfaceClients[i])
+			}
+		}
+		if len(keptClients) == 0 {
+			return false, nil
+		}
+		clients = keptClients
+		interfaceClients = keptWire
+	}
+
+	if oldInbound.Protocol == model.WireGuard {
+		if dErr := defaultWireguardClients(existingClients, clients, interfaceClients); dErr != nil {
 			return false, dErr
 		}
 	}
@@ -320,6 +383,13 @@ func (s *ClientService) addInboundClient(inboundSvc *InboundService, data *model
 		case "wireguard":
 			if client.PublicKey == "" {
 				return false, common.NewError("wireguard client requires a key")
+			}
+		case "mtproto":
+			if client.Secret == "" {
+				return false, common.NewError("mtproto client requires a secret")
+			}
+			if client.AdTag != "" && !model.ValidMtprotoAdTag(client.AdTag) {
+				return false, common.NewError("mtproto client ad tag must be 32 hex characters")
 			}
 		default:
 			if client.ID == "" {
@@ -349,6 +419,7 @@ func (s *ClientService) addInboundClient(inboundSvc *InboundService, data *model
 		return false, err
 	}
 
+	prevSettings := oldInbound.Settings
 	oldInbound.Settings = string(newSettings)
 
 	needRestart := false
@@ -392,6 +463,8 @@ func (s *ClientService) addInboundClient(inboundSvc *InboundService, data *model
 	if oldInbound.NodeID == nil {
 		if !push {
 			needRestart = true
+		} else if oldInbound.Protocol == model.MTProto {
+			inboundSvc.applyLocalMtproto(oldInbound.Id)
 		} else {
 			for _, client := range clients {
 				if len(client.Email) == 0 {
@@ -403,7 +476,7 @@ func (s *ClientService) addInboundClient(inboundSvc *InboundService, data *model
 				}
 				cipher := ""
 				if oldInbound.Protocol == "shadowsocks" {
-					cipher = oldSettings["method"].(string)
+					cipher, _ = oldSettings["method"].(string)
 				}
 				err1 := rt.AddUser(context.Background(), oldInbound, map[string]any{
 					"email":        client.Email,
@@ -440,6 +513,9 @@ func (s *ClientService) addInboundClient(inboundSvc *InboundService, data *model
 					push = false
 				}
 			}
+		}
+		if push {
+			advancePushedInbound(rt, prevSettings, oldInbound)
 		}
 	}
 
@@ -482,6 +558,8 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 		newClientId = clients[0].Auth
 	case "wireguard":
 		newClientId = clients[0].Email
+	case "mtproto":
+		newClientId = clients[0].Email
 	default:
 		newClientId = clients[0].ID
 	}
@@ -503,6 +581,9 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 	}
 	if strings.TrimSpace(clients[0].Email) == "" {
 		return false, common.NewError("client email is required")
+	}
+	if oldInbound.Protocol == model.MTProto && clients[0].AdTag != "" && !model.ValidMtprotoAdTag(clients[0].AdTag) {
+		return false, common.NewError("mtproto client ad tag must be 32 hex characters")
 	}
 
 	if clients[0].Email != oldEmail {
@@ -528,6 +609,26 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 		}
 		if len(clients[0].AllowedIPs) == 0 {
 			clients[0].AllowedIPs = old.AllowedIPs
+		} else {
+			normalized, nErr := normalizeWireguardAllowedIPs(clients[0].AllowedIPs)
+			if nErr != nil {
+				return false, nErr
+			}
+			if len(normalized) == 0 {
+				clients[0].AllowedIPs = old.AllowedIPs
+			} else {
+				peers := make([]string, 0, len(oldClients))
+				for i := range oldClients {
+					if i == clientIndex {
+						continue
+					}
+					peers = append(peers, oldClients[i].AllowedIPs...)
+				}
+				if hit := wireguardAllowedIPsCollision(normalized, peers); hit != "" {
+					return false, common.NewError("wireguard: allowedIPs entry already used by another client:", hit)
+				}
+				clients[0].AllowedIPs = normalized
+			}
 		}
 		if clients[0].PreSharedKey == "" {
 			clients[0].PreSharedKey = old.PreSharedKey
@@ -545,13 +646,18 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 	settingsClients, _ := oldSettings["clients"].([]any)
 	var preservedCreated any
 	var preservedSubID string
+	var oldClientMap map[string]any
 	if clientIndex >= 0 && clientIndex < len(settingsClients) {
 		if oldMap, ok := settingsClients[clientIndex].(map[string]any); ok {
+			oldClientMap = oldMap
 			if v, ok2 := oldMap["created_at"]; ok2 {
 				preservedCreated = v
 			}
 			preservedSubID, _ = oldMap["subId"].(string)
 		}
+	}
+	if oldInbound.Protocol == model.Shadowsocks {
+		applyShadowsocksClientMethod(interfaceClients, oldSettings)
 	}
 	if len(interfaceClients) > 0 {
 		if newMap, ok := interfaceClients[0].(map[string]any); ok {
@@ -559,7 +665,6 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 				preservedCreated = time.Now().Unix() * 1000
 			}
 			newMap["created_at"] = preservedCreated
-			newMap["updated_at"] = time.Now().Unix() * 1000
 			newSub, _ := newMap["subId"].(string)
 			if strings.TrimSpace(newSub) == "" {
 				if strings.TrimSpace(preservedSubID) != "" {
@@ -567,6 +672,9 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 				} else {
 					newMap["subId"] = random.NumLower(16)
 				}
+			}
+			if v, ok2 := newMap["subId"].(string); ok2 {
+				clients[0].SubID = v
 			}
 			if oldInbound.Protocol == model.WireGuard {
 				newMap["privateKey"] = clients[0].PrivateKey
@@ -579,11 +687,17 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 					newMap["keepAlive"] = clients[0].KeepAlive
 				}
 			}
+			if oldClientMap != nil && sameClientConfigExceptUpdatedAt(oldClientMap, newMap) {
+				if v, ok2 := oldClientMap["updated_at"]; ok2 {
+					newMap["updated_at"] = v
+				} else {
+					delete(newMap, "updated_at")
+				}
+			} else {
+				newMap["updated_at"] = time.Now().Unix() * 1000
+			}
 			interfaceClients[0] = newMap
 		}
-	}
-	if oldInbound.Protocol == model.Shadowsocks {
-		applyShadowsocksClientMethod(interfaceClients, oldSettings)
 	}
 	settingsClients[clientIndex] = interfaceClients[0]
 	oldSettings["clients"] = settingsClients
@@ -610,6 +724,11 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 		return false, err
 	}
 
+	if string(newSettings) == oldInbound.Settings {
+		return false, nil
+	}
+
+	prevSettings := oldInbound.Settings
 	oldInbound.Settings = string(newSettings)
 
 	needRestart := false
@@ -686,6 +805,21 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 		if e := tx.Save(oldInbound).Error; e != nil {
 			return e
 		}
+		// Rename the client record in the same transaction as the settings JSON
+		// so no concurrent SyncInbound can see one renamed without the other.
+		// Byte-level compare (not EqualFold): case-only edits must rename too,
+		// otherwise SyncInbound's case-sensitive lookup creates a duplicate row.
+		if len(oldEmail) > 0 && oldEmail != clients[0].Email {
+			var renameTaken int64
+			if e := tx.Model(&model.ClientRecord{}).Where("email = ?", clients[0].Email).Count(&renameTaken).Error; e != nil {
+				return e
+			}
+			if renameTaken == 0 {
+				if e := tx.Model(&model.ClientRecord{}).Where("email = ?", oldEmail).Update("email", clients[0].Email).Error; e != nil {
+					return e
+				}
+			}
+		}
 		finalClients, gcErr := inboundSvc.GetClients(oldInbound)
 		if gcErr != nil {
 			return gcErr
@@ -707,6 +841,8 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 		if oldInbound.NodeID == nil {
 			if !push {
 				needRestart = true
+			} else if oldInbound.Protocol == model.MTProto {
+				inboundSvc.applyLocalMtproto(oldInbound.Id)
 			} else {
 				if oldClients[clientIndex].Enable {
 					err1 := rt.RemoveUser(context.Background(), oldInbound, oldEmail)
@@ -722,7 +858,7 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 				if clients[0].Enable {
 					cipher := ""
 					if oldInbound.Protocol == "shadowsocks" {
-						cipher = oldSettings["method"].(string)
+						cipher, _ = oldSettings["method"].(string)
 					}
 					err1 := rt.AddUser(context.Background(), oldInbound, map[string]any{
 						"email":        clients[0].Email,
@@ -748,6 +884,8 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 		} else if push {
 			if err1 := rt.UpdateUser(context.Background(), oldInbound, oldEmail, clients[0]); err1 != nil {
 				logger.Warning("Error in updating client on", rt.Name(), ":", err1)
+			} else {
+				advancePushedInbound(rt, prevSettings, oldInbound)
 			}
 		}
 	} else {
@@ -758,7 +896,7 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 	return needRestart, nil
 }
 
-func (s *ClientService) DelInboundClientByEmail(inboundSvc *InboundService, inboundId int, email string, keepTraffic bool) (bool, error) {
+func (s *ClientService) DelInboundClientByEmail(inboundSvc *InboundService, inboundId int, email string, keepTraffic bool, fullDelete bool) (bool, error) {
 	defer lockInbound(inboundId).Unlock()
 
 	oldInbound, err := inboundSvc.GetInbound(inboundId)
@@ -808,6 +946,7 @@ func (s *ClientService) DelInboundClientByEmail(inboundSvc *InboundService, inbo
 		return false, err
 	}
 
+	prevSettings := oldInbound.Settings
 	oldInbound.Settings = string(newSettings)
 
 	emailShared, err := inboundSvc.emailUsedByOtherInbounds(email, inboundId)
@@ -880,9 +1019,14 @@ func (s *ClientService) DelInboundClientByEmail(inboundSvc *InboundService, inbo
 	// inbound's runtime even when the same email survives in another inbound.
 	if len(email) > 0 {
 		if oldInbound.NodeID == nil {
-			// Local inbound: a disabled client isn't in the running Xray, so only
-			// a live one (needApiDel) needs an API removal.
-			if needApiDel {
+			if oldInbound.Protocol == model.MTProto {
+				// mtg serves the full secret set, so any client delete re-applies
+				// it (removing the last client stops the sidecar) regardless of the
+				// client's enable state.
+				inboundSvc.applyLocalMtproto(oldInbound.Id)
+			} else if needApiDel {
+				// Local inbound: a disabled client isn't in the running Xray, so only
+				// a live one (needApiDel) needs an API removal.
 				if !push {
 					needRestart = true
 				} else if err1 := rt.RemoveUser(context.Background(), oldInbound, email); err1 == nil {
@@ -898,10 +1042,20 @@ func (s *ClientService) DelInboundClientByEmail(inboundSvc *InboundService, inbo
 		} else {
 			// Node inbound: propagate the delete regardless of the enable flag —
 			// the node's own DB still carries a disabled client and would
-			// resurrect it on the next snapshot otherwise.
+			// resurrect it on the next snapshot otherwise. A full client delete
+			// must remove the node's client record too, not just detach it from
+			// this inbound (#5797).
 			if push {
-				if err1 := rt.DeleteUser(context.Background(), oldInbound, email); err1 != nil {
+				var err1 error
+				if fullDelete {
+					err1 = rt.DeleteClient(context.Background(), email)
+				} else {
+					err1 = rt.DeleteUser(context.Background(), oldInbound, email)
+				}
+				if err1 != nil {
 					logger.Warning("Error in deleting client on", rt.Name(), ":", err1)
+				} else {
+					advancePushedInbound(rt, prevSettings, oldInbound)
 				}
 			}
 		}
@@ -990,62 +1144,18 @@ func (s *ClientService) CheckIsEnabledByEmail(inboundSvc *InboundService, client
 }
 
 func (s *ClientService) ToggleClientEnableByEmail(inboundSvc *InboundService, clientEmail string) (bool, bool, error) {
-	_, inbound, err := inboundSvc.GetClientInboundByEmail(clientEmail)
+	current, err := s.CheckIsEnabledByEmail(inboundSvc, clientEmail)
 	if err != nil {
 		return false, false, err
 	}
-	if inbound == nil {
-		return false, false, common.NewError("Inbound Not Found For Email:", clientEmail)
-	}
-
-	oldClients, err := inboundSvc.GetClients(inbound)
-	if err != nil {
-		return false, false, err
-	}
-
-	found := false
-	clientOldEnabled := false
-
-	for _, oldClient := range oldClients {
-		if oldClient.Email == clientEmail {
-			found = true
-			clientOldEnabled = oldClient.Enable
-			break
-		}
-	}
-
-	if !found {
-		return false, false, common.NewError("Client Not Found For Email:", clientEmail)
-	}
-
-	var settings map[string]any
-	err = json.Unmarshal([]byte(inbound.Settings), &settings)
-	if err != nil {
-		return false, false, err
-	}
-	clients := settings["clients"].([]any)
-	var newClients []any
-	for client_index := range clients {
-		c := clients[client_index].(map[string]any)
-		if c["email"] == clientEmail {
-			c["enable"] = !clientOldEnabled
-			c["updated_at"] = time.Now().Unix() * 1000
-			newClients = append(newClients, any(c))
-		}
-	}
-	settings["clients"] = newClients
-	modifiedSettings, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return false, false, err
-	}
-	inbound.Settings = string(modifiedSettings)
-
-	needRestart, err := s.UpdateInboundClient(inboundSvc, inbound, clientEmail)
+	target := !current
+	needRestart, err := s.applyClientFieldByEmail(inboundSvc, clientEmail, func(c map[string]any) {
+		c["enable"] = target
+	})
 	if err != nil {
 		return false, needRestart, err
 	}
-
-	return !clientOldEnabled, needRestart, nil
+	return target, needRestart, nil
 }
 
 func (s *ClientService) SetClientEnableByEmail(inboundSvc *InboundService, clientEmail string, enable bool) (bool, bool, error) {
@@ -1056,11 +1166,13 @@ func (s *ClientService) SetClientEnableByEmail(inboundSvc *InboundService, clien
 	if current == enable {
 		return false, false, nil
 	}
-	newEnabled, needRestart, err := s.ToggleClientEnableByEmail(inboundSvc, clientEmail)
+	needRestart, err := s.applyClientFieldByEmail(inboundSvc, clientEmail, func(c map[string]any) {
+		c["enable"] = enable
+	})
 	if err != nil {
 		return false, needRestart, err
 	}
-	return newEnabled == enable, needRestart, nil
+	return true, needRestart, nil
 }
 
 // applyClientFieldByEmail loads the inbound currently hosting clientEmail,

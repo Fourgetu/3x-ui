@@ -65,6 +65,7 @@ func run(root, outDir string) error {
 				"Msg",
 				"AllSetting",
 				"AllSettingView",
+				"HostGroup",
 			),
 		},
 		{
@@ -77,13 +78,15 @@ func run(root, outDir string) error {
 			Path: resolveRel(root, "internal/web/service"),
 			StructAllow: setOf(
 				"InboundOption",
+				"NodeMutationRequest",
+				"NodeView",
 				"ProbeResultUI",
 				"RealityScanResult",
 			),
 		},
 		{
 			Path:        resolveRel(root, "internal/web/service/panel"),
-			StructAllow: setOf("ApiTokenView"),
+			StructAllow: setOf("ApiTokenView", "PanelUpdateStatus"),
 		},
 	}
 

@@ -54,6 +54,7 @@ type Inbound struct {
 	Enable               bool                 `json:"enable" form:"enable" gorm:"index:idx_enable_traffic_reset,priority:1" example:"true"`                                                                         // Whether the inbound is enabled
 	ExpiryTime           int64                `json:"expiryTime" form:"expiryTime"`                                                                                                                                 // Expiration timestamp
 	TrafficReset         string               `json:"trafficReset" form:"trafficReset" gorm:"default:never;index:idx_enable_traffic_reset,priority:2" validate:"omitempty,oneof=never hourly daily weekly monthly"` // Traffic reset schedule
+	TrafficResetDay      int                  `json:"trafficResetDay" form:"trafficResetDay" gorm:"default:1" validate:"omitempty,gte=1,lte=31" example:"1"`                                                        // Day of month for monthly traffic resets
 	LastTrafficResetTime int64                `json:"lastTrafficResetTime" form:"lastTrafficResetTime" gorm:"default:0"`                                                                                            // Last traffic reset timestamp
 	ClientStats          []xray.ClientTraffic `gorm:"foreignKey:InboundId;references:Id" json:"clientStats" form:"clientStats"`                                                                                     // Client traffic statistics
 
@@ -229,6 +230,57 @@ func jsonStringFieldFromRaw(r json.RawMessage) string {
 	return string(trimmed)
 }
 
+// hysteriaConfigVersion is the only hysteria version xray-core builds. Both
+// the protocol settings and the transport settings answer anything else with
+// "version != 2", and that error rejects the whole config — every other
+// inbound on the server goes down with it, not just the hysteria one.
+const hysteriaConfigVersion = 2
+
+// HealHysteriaVersion pins a hysteria inbound's settings.version to the
+// version xray-core accepts. Rows written before the panel settled on v2, or
+// through the API and the raw JSON editor, can still carry the legacy 1 or no
+// version at all, either of which stops the core from starting.
+func HealHysteriaVersion(settings string) (string, bool) {
+	return healVersionField(settings, nil)
+}
+
+// HealHysteriaStreamVersion does the same for the transport half,
+// streamSettings.hysteriaSettings.version, which xray-core validates
+// separately. An absent hysteriaSettings object is left alone.
+func HealHysteriaStreamVersion(streamSettings string) (string, bool) {
+	return healVersionField(streamSettings, []string{"hysteriaSettings"})
+}
+
+// healVersionField rewrites the "version" key of the object reached by path to
+// hysteriaConfigVersion, reporting whether anything changed. A path that does
+// not resolve to an object leaves the input untouched.
+func healVersionField(raw string, path []string) (string, bool) {
+	if raw == "" {
+		return raw, false
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return raw, false
+	}
+	target := parsed
+	for _, key := range path {
+		next, ok := target[key].(map[string]any)
+		if !ok {
+			return raw, false
+		}
+		target = next
+	}
+	if version, ok := target["version"].(float64); ok && version == hysteriaConfigVersion {
+		return raw, false
+	}
+	target["version"] = hysteriaConfigVersion
+	out, err := json.MarshalIndent(parsed, "", "  ")
+	if err != nil {
+		return raw, false
+	}
+	return string(out), true
+}
+
 // StripInboundXhttpClientFields removes xHTTP knobs that belong on the
 // client dialer and subscription share-link extras only. xray-core's XHTTP
 // inbound listener does not consume them; the panel still stores them on
@@ -294,10 +346,23 @@ func (i *Inbound) GenXrayInboundConfig() *xray.InboundConfig {
 		if stripped, ok := StripVlessInboundEncryption(settings); ok {
 			settings = stripped
 		}
+	case WireGuard:
+		if converted, ok := WireguardClientsToPeers(settings); ok {
+			settings = converted
+		}
+	case Hysteria:
+		if healed, ok := HealHysteriaVersion(settings); ok {
+			settings = healed
+		}
 	}
 	streamSettings := i.StreamSettings
 	if stripped, ok := StripInboundXhttpClientFields(streamSettings); ok {
 		streamSettings = stripped
+	}
+	if i.Protocol == Hysteria {
+		if healed, ok := HealHysteriaStreamVersion(streamSettings); ok {
+			streamSettings = healed
+		}
 	}
 	return &xray.InboundConfig{
 		Listen:         json_util.RawMessage(listen),
@@ -344,6 +409,81 @@ func StripVmessClientSecurity(settings string) (string, bool) {
 	return string(out), true
 }
 
+// WireguardPeerFromClient builds the xray wireguard inbound peer object for one
+// WireGuard client. It is the single definition of the peer shape, shared by the
+// full-config path (XrayService.GetXrayConfig) and the live AddInbound path
+// (WireguardClientsToPeers), so both emit identical peers. The client's
+// privateKey is intentionally omitted — it is the client's secret, not part of
+// the server-side peer.
+func WireguardPeerFromClient(c Client) map[string]any {
+	peer := map[string]any{"email": c.Email, "level": 0}
+	if c.PublicKey != "" {
+		peer["publicKey"] = c.PublicKey
+	}
+	if len(c.AllowedIPs) > 0 {
+		peer["allowedIPs"] = c.AllowedIPs
+	}
+	if c.PreSharedKey != "" {
+		peer["preSharedKey"] = c.PreSharedKey
+	}
+	if c.KeepAlive > 0 {
+		peer["keepAlive"] = c.KeepAlive
+	}
+	return peer
+}
+
+// WireguardClientsToPeers rewrites a WireGuard inbound's settings JSON from the
+// panel's client representation into the peers array xray-core's wireguard
+// inbound expects. The panel stores WireGuard clients under "clients" (the shape
+// every other protocol uses); xray is configured with "peers". GetXrayConfig
+// already does this conversion when it builds the full config, but the live
+// gRPC AddInbound paths (inbound create/edit and node reconcile) go through
+// GenXrayInboundConfig directly — without the conversion they re-add the
+// wireguard inbound with no peers, dropping every connected client until the
+// next full restart. Clients are the source of truth and are always rebuilt
+// into peers (matching GetXrayConfig), so the panel's empty "peers" placeholder
+// never blocks the conversion. Idempotent: converting removes "clients", so a
+// second call is a no-op, as is any inbound that carries no "clients".
+func WireguardClientsToPeers(settings string) (string, bool) {
+	if settings == "" {
+		return settings, false
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(settings), &parsed); err != nil {
+		return settings, false
+	}
+	clients, ok := parsed["clients"].([]any)
+	if !ok {
+		return settings, false
+	}
+	peers := make([]any, 0, len(clients))
+	for _, raw := range clients {
+		cm, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if enable, ok := cm["enable"].(bool); ok && !enable {
+			continue
+		}
+		encoded, err := json.Marshal(cm)
+		if err != nil {
+			continue
+		}
+		var c Client
+		if err := json.Unmarshal(encoded, &c); err != nil {
+			continue
+		}
+		peers = append(peers, WireguardPeerFromClient(c))
+	}
+	delete(parsed, "clients")
+	parsed["peers"] = peers
+	out, err := json.MarshalIndent(parsed, "", "  ")
+	if err != nil {
+		return settings, false
+	}
+	return string(out), true
+}
+
 func StripVlessInboundEncryption(settings string) (string, bool) {
 	if settings == "" {
 		return settings, false
@@ -363,8 +503,23 @@ func StripVlessInboundEncryption(settings string) (string, bool) {
 	return string(out), true
 }
 
-// HealShadowsocksClientMethods normalises the per-client `method` field
-// on a shadowsocks inbound's settings JSON before it leaves for xray-core:
+// ReplaceRemovedShadowsocksCipher maps ciphers that xray-core v26.7.11
+// deleted ("none"/"plain" make the whole config fail with "unknown cipher
+// method") to a still-supported replacement. Returns the replacement and
+// true when the given method is one of the removed ciphers.
+func ReplaceRemovedShadowsocksCipher(method string) (string, bool) {
+	switch method {
+	case "none", "plain":
+		return "chacha20-ietf-poly1305", true
+	}
+	return method, false
+}
+
+// HealShadowsocksClientMethods normalises the `method` fields on a
+// shadowsocks inbound's settings JSON before it leaves for xray-core:
+//   - Ciphers removed upstream (none/plain): rewritten via
+//     ReplaceRemovedShadowsocksCipher so one legacy row cannot prevent
+//     xray from starting.
 //   - Legacy ciphers (aes-*, chacha20-*): every client must carry a
 //     per-user `method` matching the inbound's top-level method, otherwise
 //     xray fails with "unsupported cipher method:".
@@ -383,12 +538,24 @@ func HealShadowsocksClientMethods(settings string) (string, bool) {
 		return settings, false
 	}
 	method, _ := parsed["method"].(string)
+	changed := false
+	if replacement, removed := ReplaceRemovedShadowsocksCipher(method); removed {
+		method = replacement
+		parsed["method"] = method
+		changed = true
+	}
 	clients, ok := parsed["clients"].([]any)
 	if !ok {
-		return settings, false
+		if !changed {
+			return settings, false
+		}
+		out, err := json.MarshalIndent(parsed, "", "  ")
+		if err != nil {
+			return settings, false
+		}
+		return string(out), true
 	}
 	is2022 := strings.HasPrefix(method, "2022-blake3-")
-	changed := false
 	for i := range clients {
 		cm, ok := clients[i].(map[string]any)
 		if !ok {
@@ -425,7 +592,8 @@ func HealShadowsocksClientMethods(settings string) (string, bool) {
 
 // GenerateFakeTLSSecret builds an MTProto FakeTLS secret for the given domain:
 // the "ee" FakeTLS marker, 16 random bytes, then the domain encoded as hex.
-// This single value is what mtg's config and the client tg:// link both use.
+// MTProto is multi-client, so this value belongs to one client: mtg's [secrets]
+// config and that client's tg:// link both read it per client.
 func GenerateFakeTLSSecret(domain string) string {
 	return "ee" + mtprotoRandomMiddle() + hex.EncodeToString([]byte(domain))
 }
@@ -455,13 +623,25 @@ func mtprotoSecretMiddle(secret string) string {
 	return mtprotoRandomMiddle()
 }
 
-// HealMtprotoSecret normalises an mtproto inbound's settings JSON before the
-// value leaves for the mtg sidecar or a share link: it rebuilds `secret` so it
-// is always a valid FakeTLS secret whose trailing domain matches
-// `fakeTlsDomain`, generating the random middle when one is missing and
-// rewriting the domain suffix when the domain changed. Returns the rewritten
-// settings and true when anything changed.
-func HealMtprotoSecret(settings string) (string, bool) {
+// ValidMtprotoAdTag reports whether a Telegram advertising tag from
+// @MTProxybot is well-formed: exactly 16 bytes as 32 hex characters. mtg
+// refuses to start (or rejects a live update) on a malformed tag, so every
+// write path validates before the tag can reach a generated config.
+func ValidMtprotoAdTag(tag string) bool {
+	if len(tag) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(tag)
+	return err == nil
+}
+
+// StripMtprotoInboundSecret removes the vestigial inbound-level `secret` from an
+// mtproto inbound's settings JSON. MTProto is multi-client: every secret lives on
+// a client, and mtg's [secrets] config plus every share link read only the
+// per-client secrets. A lingering inbound-level secret is dead data — it once
+// leaked into stale links that mtg rejected as "incorrect client random". Returns
+// the rewritten settings and true when a `secret` key was removed.
+func StripMtprotoInboundSecret(settings string) (string, bool) {
 	if settings == "" {
 		return settings, false
 	}
@@ -469,17 +649,98 @@ func HealMtprotoSecret(settings string) (string, bool) {
 	if err := json.Unmarshal([]byte(settings), &parsed); err != nil {
 		return settings, false
 	}
-	domain, _ := parsed["fakeTlsDomain"].(string)
-	domain = strings.TrimSpace(domain)
-	if domain == "" {
+	if _, ok := parsed["secret"]; !ok {
 		return settings, false
 	}
-	secret, _ := parsed["secret"].(string)
-	expected := "ee" + mtprotoSecretMiddle(secret) + hex.EncodeToString([]byte(domain))
-	if secret == expected {
+	delete(parsed, "secret")
+	out, err := json.MarshalIndent(parsed, "", "  ")
+	if err != nil {
 		return settings, false
 	}
-	parsed["secret"] = expected
+	return string(out), true
+}
+
+// StripMtprotoInboundAdTag drops the dead inbound-level `adTag` — tags live on clients.
+func StripMtprotoInboundAdTag(settings string) (string, bool) {
+	if settings == "" {
+		return settings, false
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(settings), &parsed); err != nil {
+		return settings, false
+	}
+	if _, ok := parsed["adTag"]; !ok {
+		return settings, false
+	}
+	delete(parsed, "adTag")
+	out, err := json.MarshalIndent(parsed, "", "  ")
+	if err != nil {
+		return settings, false
+	}
+	return string(out), true
+}
+
+// mtprotoSecretDomain extracts the FakeTLS domain embedded in the tail of a
+// secret, returning an empty string when the secret is malformed. Each mtproto
+// client carries its own domain inside its secret, so healing preserves it
+// instead of forcing every client onto the inbound-level default.
+func mtprotoSecretDomain(secret string) string {
+	s := secret
+	if strings.HasPrefix(s, "ee") || strings.HasPrefix(s, "dd") {
+		s = s[2:]
+	}
+	if len(s) <= 32 {
+		return ""
+	}
+	decoded, err := hex.DecodeString(s[32:])
+	if err != nil || len(decoded) == 0 {
+		return ""
+	}
+	return string(decoded)
+}
+
+// HealMtprotoClientSecrets normalises every client's FakeTLS secret in an
+// mtproto inbound's settings JSON: each secret is rebuilt so it stays a valid
+// FakeTLS value, keeping the client's own embedded domain when present and
+// falling back to the inbound-level fakeTlsDomain otherwise. Returns the
+// rewritten settings and true when anything changed.
+func HealMtprotoClientSecrets(settings string) (string, bool) {
+	if settings == "" {
+		return settings, false
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(settings), &parsed); err != nil {
+		return settings, false
+	}
+	clients, ok := parsed["clients"].([]any)
+	if !ok || len(clients) == 0 {
+		return settings, false
+	}
+	defaultDomain, _ := parsed["fakeTlsDomain"].(string)
+	defaultDomain = strings.TrimSpace(defaultDomain)
+	changed := false
+	for _, raw := range clients {
+		client, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		secret, _ := client["secret"].(string)
+		domain := mtprotoSecretDomain(secret)
+		if domain == "" {
+			domain = defaultDomain
+		}
+		if domain == "" {
+			continue
+		}
+		expected := "ee" + mtprotoSecretMiddle(secret) + hex.EncodeToString([]byte(domain))
+		if secret != expected {
+			client["secret"] = expected
+			changed = true
+		}
+	}
+	if !changed {
+		return settings, false
+	}
 	out, err := json.MarshalIndent(parsed, "", "  ")
 	if err != nil {
 		return settings, false
@@ -506,7 +767,7 @@ type Node struct {
 	Address             string   `json:"address" form:"address" validate:"required" example:"node1.example.com"`
 	Port                int      `json:"port" form:"port" validate:"gte=1,lte=65535" example:"2053"`
 	BasePath            string   `json:"basePath" form:"basePath" example:"/"`
-	ApiToken            string   `json:"apiToken" form:"apiToken" validate:"required_unless=TlsVerifyMode mtls" example:"abcdef0123456789"`
+	ApiToken            string   `json:"-" form:"-" gorm:"column:api_token" validate:"required_unless=TlsVerifyMode mtls" example:"abcdef0123456789"`
 	Enable              bool     `json:"enable" form:"enable" gorm:"default:true" example:"true"`
 	AllowPrivateAddress bool     `json:"allowPrivateAddress" form:"allowPrivateAddress" gorm:"default:false"`
 	TlsVerifyMode       string   `json:"tlsVerifyMode" form:"tlsVerifyMode" gorm:"column:tls_verify_mode;default:verify" validate:"omitempty,oneof=verify skip pin mtls"`
@@ -545,6 +806,10 @@ type Node struct {
 
 	ConfigDirty   bool  `json:"configDirty" gorm:"default:false"`
 	ConfigDirtyAt int64 `json:"configDirtyAt"`
+
+	// InboundsAdoptedAt records the first clean traffic sync that imported the
+	// node's pre-existing inbounds; reconcile must not sweep remote tags before it.
+	InboundsAdoptedAt int64 `json:"-" gorm:"column:inbounds_adopted_at;default:0"`
 
 	InboundCount  int `json:"inboundCount" gorm:"-" example:"5"`
 	ClientCount   int `json:"clientCount" gorm:"-" example:"27"`
@@ -603,6 +868,8 @@ type Client struct {
 	AllowedIPs   []string       `json:"allowedIPs,omitempty"`
 	PreSharedKey string         `json:"preSharedKey,omitempty"`
 	KeepAlive    int            `json:"keepAlive,omitempty"`
+	Secret       string         `json:"secret,omitempty" example:"ee1234567890abcdef1234567890abcd7777772e636c6f7564666c6172652e636f6d"`
+	AdTag        string         `json:"adTag,omitempty" example:"0123456789abcdef0123456789abcdef"`
 	Email        string         `json:"email"`                        // Client email identifier
 	LimitIP      int            `json:"limitIp"`                      // IP limit for this client
 	TotalGB      int64          `json:"totalGB" form:"totalGB"`       // Total traffic limit in GB
@@ -632,11 +899,13 @@ type ClientRecord struct {
 	AllowedIPs   string `json:"allowedIPs" gorm:"column:wg_allowed_ips"`
 	PreSharedKey string `json:"preSharedKey" gorm:"column:wg_pre_shared_key"`
 	KeepAlive    int    `json:"keepAlive" gorm:"column:wg_keep_alive;default:0"`
+	Secret       string `json:"secret" gorm:"column:secret"`
+	AdTag        string `json:"adTag" gorm:"column:ad_tag;default:''"`
 	LimitIP      int    `json:"limitIp" gorm:"column:limit_ip"`
 	TotalGB      int64  `json:"totalGB" gorm:"column:total_gb"`
 	ExpiryTime   int64  `json:"expiryTime" gorm:"column:expiry_time"`
 	Enable       bool   `json:"enable" gorm:"default:true"`
-	TgID         int64  `json:"tgId" gorm:"column:tg_id"`
+	TgID         int64  `json:"tgId" gorm:"column:tg_id;index:idx_clients_tg_id"`
 	Group        string `json:"group" gorm:"column:group_name;default:'';index:idx_client_record_group"`
 	Comment      string `json:"comment"`
 	Reset        int    `json:"reset" gorm:"default:0"`
@@ -736,12 +1005,9 @@ type InboundFallback struct {
 
 func (InboundFallback) TableName() string { return "inbound_fallbacks" }
 
-// Host is an override endpoint attached to an inbound: at subscription time each
-// enabled host renders one share link/proxy with its own address/port/TLS/etc.,
-// superseding the legacy externalProxy array. Free-JSON fields are stored as
-// text and parsed in the sub layer; slice fields use the json serializer.
 type Host struct {
 	Id                int      `json:"id" form:"id" gorm:"primaryKey;autoIncrement" example:"1"`
+	GroupId           string   `json:"groupId" form:"groupId" gorm:"column:group_id;index"`
 	InboundId         int      `json:"inboundId" form:"inboundId" gorm:"index;not null;column:inbound_id" validate:"required" example:"1"`
 	SortOrder         int      `json:"sortOrder" form:"sortOrder" gorm:"default:0;column:sort_order"`
 	Remark            string   `json:"remark" form:"remark" validate:"required,max=256" example:"cdn-front"`
@@ -815,6 +1081,8 @@ func (c *Client) ToRecord() *ClientRecord {
 		AllowedIPs:   strings.Join(c.AllowedIPs, ","),
 		PreSharedKey: c.PreSharedKey,
 		KeepAlive:    c.KeepAlive,
+		Secret:       c.Secret,
+		AdTag:        c.AdTag,
 	}
 	if c.Reverse != nil {
 		if b, err := json.Marshal(c.Reverse); err == nil {
@@ -866,6 +1134,8 @@ func (r *ClientRecord) ToClient() *Client {
 		AllowedIPs:   splitWireguardAllowedIPs(r.AllowedIPs),
 		PreSharedKey: r.PreSharedKey,
 		KeepAlive:    r.KeepAlive,
+		Secret:       r.Secret,
+		AdTag:        r.AdTag,
 	}
 	if r.Reverse != "" {
 		var rev ClientReverse
@@ -889,6 +1159,7 @@ type OutboundSubscription struct {
 	Url                  string `json:"url" form:"url"`
 	Enabled              bool   `json:"enabled" form:"enabled" gorm:"default:true"`
 	AllowPrivate         bool   `json:"allowPrivate" form:"allowPrivate" gorm:"default:false"`
+	AllowInsecure        bool   `json:"allowInsecure" form:"allowInsecure" gorm:"default:false"`
 	TagPrefix            string `json:"tagPrefix" form:"tagPrefix"`
 	UpdateInterval       int    `json:"updateInterval" form:"updateInterval" gorm:"default:600"` // seconds between refreshes
 	Priority             int    `json:"priority" form:"priority" gorm:"default:0"`               // order among subscriptions in the merged outbounds (lower = earlier)
@@ -1015,6 +1286,12 @@ func MergeClientRecord(existing *ClientRecord, incoming *ClientRecord) []ClientM
 		if incomingNewer || existing.PreSharedKey == "" {
 			existing.PreSharedKey = incoming.PreSharedKey
 			keepSecret("preSharedKey")
+		}
+	}
+	if existing.Secret != incoming.Secret && incoming.Secret != "" {
+		if incomingNewer || existing.Secret == "" {
+			existing.Secret = incoming.Secret
+			keepSecret("secret")
 		}
 	}
 	if existing.AllowedIPs != incoming.AllowedIPs && incoming.AllowedIPs != "" {

@@ -143,13 +143,19 @@ func TestComputeHotDiff_StaticSectionChangeNeedsRestart(t *testing.T) {
 	if _, ok := ComputeHotDiff(makeHotConfig(), newCfg); ok {
 		t.Fatal("observatory change must force a restart")
 	}
+
+	newCfg = makeHotConfig()
+	newCfg.Env = json_util.RawMessage(`{"XRAY_DNS_PATH":"/tmp/dns"}`)
+	if _, ok := ComputeHotDiff(makeHotConfig(), newCfg); ok {
+		t.Fatal("env change must force a restart: env vars are read only at process start")
+	}
 }
 
 func TestComputeHotDiff_InboundAddRemoveChange(t *testing.T) {
 	oldCfg := makeHotConfig()
 	newCfg := makeHotConfig()
-	// change existing
-	newCfg.InboundConfigs[1].Settings = json_util.RawMessage(`{"clients":[{"email":"a"}]}`)
+	// change existing beyond the clients list, so no user-level shortcut applies
+	newCfg.InboundConfigs[1].Settings = json_util.RawMessage(`{"clients":[],"decryption":"none"}`)
 	// add new
 	newCfg.InboundConfigs = append(newCfg.InboundConfigs, InboundConfig{
 		Port: 2080, Protocol: "vmess", Tag: "inbound-2080",
@@ -168,6 +174,80 @@ func TestComputeHotDiff_InboundAddRemoveChange(t *testing.T) {
 	}
 	if diff.RoutingConfig != nil || len(diff.AddedOutbounds) != 0 || len(diff.RemovedOutboundTags) != 0 {
 		t.Fatalf("unexpected non-inbound operations: %+v", diff)
+	}
+}
+
+func TestComputeHotDiff_ClientOnlyChangeUsesUserOps(t *testing.T) {
+	oldCfg := makeHotConfig()
+	oldCfg.InboundConfigs[1].Settings = json_util.RawMessage(`{"clients":[{"email":"a","id":"uuid-a"},{"email":"b","id":"uuid-b"}],"decryption":"none"}`)
+	newCfg := makeHotConfig()
+	// b expired and is stripped from the generated config (#5712); a's id rotated.
+	newCfg.InboundConfigs[1].Settings = json_util.RawMessage(`{"clients":[{"email":"a","id":"uuid-a2"},{"email":"c","id":"uuid-c"}],"decryption":"none"}`)
+
+	diff, ok := ComputeHotDiff(oldCfg, newCfg)
+	if !ok {
+		t.Fatal("client-only change must be hot-appliable")
+	}
+	if len(diff.RemovedInboundTags) != 0 || len(diff.AddedInbounds) != 0 {
+		t.Fatalf("client-only change must not replace the handler, got %+v", diff)
+	}
+	removed := map[string]bool{}
+	for _, u := range diff.RemovedUsers {
+		if u.Tag != "inbound-1080" || u.Protocol != "vless" {
+			t.Fatalf("removed user op has wrong target: %+v", u)
+		}
+		removed[u.Email] = true
+	}
+	if len(removed) != 2 || !removed["a"] || !removed["b"] {
+		t.Fatalf("expected users a (changed) and b (gone) removed, got %v", removed)
+	}
+	added := map[string]string{}
+	for _, u := range diff.AddedUsers {
+		id, _ := u.User["id"].(string)
+		added[u.Email] = id
+	}
+	if len(added) != 2 || added["a"] != "uuid-a2" || added["c"] != "uuid-c" {
+		t.Fatalf("expected users a (new id) and c added, got %v", added)
+	}
+}
+
+func TestComputeHotDiff_ClientChangeFallsBackToReplace(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(cfg *Config)
+	}{
+		{
+			name: "unsupported protocol",
+			mutate: func(cfg *Config) {
+				cfg.InboundConfigs[1].Protocol = "shadowsocks"
+			},
+		},
+		{
+			name: "client without email",
+			mutate: func(cfg *Config) {
+				cfg.InboundConfigs[1].Settings = json_util.RawMessage(`{"clients":[{"id":"uuid-a"}]}`)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			oldCfg := makeHotConfig()
+			newCfg := makeHotConfig()
+			tc.mutate(oldCfg)
+			tc.mutate(newCfg)
+			newCfg.InboundConfigs[1].Settings = json_util.RawMessage(`{"clients":[{"email":"x","id":"uuid-x","password":"pw"}]}`)
+
+			diff, ok := ComputeHotDiff(oldCfg, newCfg)
+			if !ok {
+				t.Fatal("change must still be hot-appliable via handler replacement")
+			}
+			if len(diff.RemovedUsers) != 0 || len(diff.AddedUsers) != 0 {
+				t.Fatalf("expected no user ops, got %+v", diff)
+			}
+			if len(diff.RemovedInboundTags) != 1 || len(diff.AddedInbounds) != 1 {
+				t.Fatalf("expected handler replacement, got %+v", diff)
+			}
+		})
 	}
 }
 
@@ -261,5 +341,47 @@ func TestComputeHotDiff_RoutingStrategyChangeNeedsRestart(t *testing.T) {
 	newCfg.RouterConfig = json_util.RawMessage(`{"domainStrategy":"IPIfNonMatch","rules":[{"type":"field","inboundTag":["api"],"outboundTag":"api"}]}`)
 	if _, ok := ComputeHotDiff(makeHotConfig(), newCfg); ok {
 		t.Fatal("domainStrategy change must force a restart")
+	}
+}
+
+func TestComputeHotDiff_RealityStreamChangeNeedsRestart(t *testing.T) {
+	oldCfg := makeHotConfig()
+	oldCfg.InboundConfigs[1].StreamSettings = json_util.RawMessage(`{"network":"tcp","security":"reality","realitySettings":{"privateKey":"old-key","serverNames":["a.example"]}}`)
+	newCfg := makeHotConfig()
+	newCfg.InboundConfigs[1].StreamSettings = json_util.RawMessage(`{"network":"tcp","security":"reality","realitySettings":{"privateKey":"new-key","serverNames":["a.example"]}}`)
+
+	if _, ok := ComputeHotDiff(oldCfg, newCfg); ok {
+		t.Fatal("a REALITY stream-settings change must force a full restart, not a gRPC hot swap")
+	}
+}
+
+func TestComputeHotDiff_SecuritySwitchToRealityNeedsRestart(t *testing.T) {
+	oldCfg := makeHotConfig()
+	oldCfg.InboundConfigs[1].StreamSettings = json_util.RawMessage(`{"network":"tcp","security":"none"}`)
+	newCfg := makeHotConfig()
+	newCfg.InboundConfigs[1].StreamSettings = json_util.RawMessage(`{"network":"tcp","security":"reality","realitySettings":{"privateKey":"k"}}`)
+
+	if _, ok := ComputeHotDiff(oldCfg, newCfg); ok {
+		t.Fatal("switching security to REALITY must force a full restart")
+	}
+}
+
+func TestComputeHotDiff_RealityClientOnlyChangeStaysHot(t *testing.T) {
+	oldCfg := makeHotConfig()
+	oldCfg.InboundConfigs[1].StreamSettings = json_util.RawMessage(`{"network":"tcp","security":"reality","realitySettings":{"privateKey":"k"}}`)
+	oldCfg.InboundConfigs[1].Settings = json_util.RawMessage(`{"clients":[{"email":"a","id":"uuid-a"}],"decryption":"none"}`)
+	newCfg := makeHotConfig()
+	newCfg.InboundConfigs[1].StreamSettings = json_util.RawMessage(`{"network":"tcp","security":"reality","realitySettings":{"privateKey":"k"}}`)
+	newCfg.InboundConfigs[1].Settings = json_util.RawMessage(`{"clients":[{"email":"a","id":"uuid-a"},{"email":"b","id":"uuid-b"}],"decryption":"none"}`)
+
+	diff, ok := ComputeHotDiff(oldCfg, newCfg)
+	if !ok {
+		t.Fatal("client-only change on a REALITY inbound must stay hot-appliable")
+	}
+	if len(diff.RemovedInboundTags) != 0 || len(diff.AddedInbounds) != 0 {
+		t.Fatalf("client-only change must not replace the handler, got %+v", diff)
+	}
+	if len(diff.AddedUsers) != 1 || diff.AddedUsers[0].Email != "b" {
+		t.Fatalf("expected user b added via AlterInbound, got %+v", diff.AddedUsers)
 	}
 }

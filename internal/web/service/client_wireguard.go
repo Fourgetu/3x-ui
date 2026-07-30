@@ -46,9 +46,8 @@ func wireguardAllocationBase(used []string, fallback string) string {
 	return fallback
 }
 
-// allocateWireguardAddress returns the first free /32 host address in base that
-// is not already present in used. The server holds the first host (.1), so
-// allocation starts at the second host (.2).
+const wireguardPoolFloorBits = 16
+
 func allocateWireguardAddress(used []string, base string) (string, error) {
 	if base == "" {
 		base = defaultWireguardBase
@@ -63,14 +62,63 @@ func allocateWireguardAddress(used []string, base string) (string, error) {
 			taken[a] = struct{}{}
 		}
 	}
-	addr := prefix.Masked().Addr().Next().Next()
-	for prefix.Contains(addr) {
-		if _, ok := taken[addr]; !ok {
-			return addr.String() + "/32", nil
+	scopes := []netip.Prefix{prefix}
+	if prefix.Addr().Is4() && prefix.Bits() > wireguardPoolFloorBits {
+		if wider, wErr := prefix.Addr().Prefix(wireguardPoolFloorBits); wErr == nil {
+			scopes = append(scopes, wider)
 		}
-		addr = addr.Next()
 	}
-	return "", common.NewError("wireguard: no free address available in", base)
+	for _, scope := range scopes {
+		addr := scope.Masked().Addr().Next().Next()
+		for scope.Contains(addr) {
+			if _, ok := taken[addr]; !ok {
+				return addr.String() + "/32", nil
+			}
+			addr = addr.Next()
+		}
+	}
+	return "", common.NewError("wireguard: no free address available in", scopes[len(scopes)-1].String())
+}
+
+// normalizeWireguardAllowedIPs validates user-supplied allowedIPs entries and
+// canonicalizes them: bare addresses become single-host prefixes, duplicates drop.
+func normalizeWireguardAllowedIPs(values []string) ([]string, error) {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		p, err := netip.ParsePrefix(v)
+		if err != nil {
+			a, aErr := netip.ParseAddr(v)
+			if aErr != nil {
+				return nil, common.NewError("wireguard: invalid allowedIPs entry:", v)
+			}
+			p = netip.PrefixFrom(a, a.BitLen())
+		}
+		norm := p.String()
+		if _, dup := seen[norm]; dup {
+			continue
+		}
+		seen[norm] = struct{}{}
+		out = append(out, norm)
+	}
+	return out, nil
+}
+
+func wireguardAllowedIPsCollision(entries, used []string) string {
+	taken := make(map[string]struct{}, len(used))
+	for _, u := range used {
+		taken[strings.TrimSpace(u)] = struct{}{}
+	}
+	for _, e := range entries {
+		if _, ok := taken[e]; ok {
+			return e
+		}
+	}
+	return ""
 }
 
 // defaultWireguardClients fills in blank WireGuard credentials for newly added
@@ -107,6 +155,18 @@ func defaultWireguardClients(existing, clients []model.Client, interfaceClients 
 				return err
 			}
 			c.AllowedIPs = []string{addr}
+		} else {
+			normalized, err := normalizeWireguardAllowedIPs(c.AllowedIPs)
+			if err != nil {
+				return err
+			}
+			if len(normalized) == 0 {
+				return common.NewError("wireguard: allowedIPs has no usable entry")
+			}
+			if hit := wireguardAllowedIPsCollision(normalized, used); hit != "" {
+				return common.NewError("wireguard: allowedIPs entry already used by another client:", hit)
+			}
+			c.AllowedIPs = normalized
 		}
 		used = append(used, c.AllowedIPs...)
 

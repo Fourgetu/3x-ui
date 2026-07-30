@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  Alert,
   Button,
   Card,
   Col,
@@ -23,6 +24,7 @@ import {
   AppleOutlined,
   CopyOutlined,
   DownOutlined,
+  DownloadOutlined,
   MoonFilled,
   MoonOutlined,
   QrcodeOutlined,
@@ -61,6 +63,9 @@ const links: string[] = Array.isArray(subData.links) ? subData.links : [];
 const linkEmails: string[] = Array.isArray(subData.emails) ? subData.emails : [];
 const subEmail = [...new Set(linkEmails.filter(Boolean))].join(', ');
 const datepicker = subData.datepicker || 'gregorian';
+const announce = subData.announce || '';
+
+const appendRawView = (url: string) => `${url}${url.includes('?') ? '&' : '?'}view=raw`;
 
 const isUnlimited = totalByte <= 0 && expireMs === 0;
 const isActive = (() => {
@@ -283,6 +288,9 @@ export default function SubPage() {
           <Row justify="center">
             <Col xs={24} sm={22} md={18} lg={14} xl={12}>
               <Card hoverable className="subscription-card" title={cardTitle} extra={cardExtra}>
+                {announce && (
+                  <Alert type="info" showIcon title={announce} style={{ marginBottom: 16 }} />
+                )}
                 <Descriptions
                   bordered
                   column={1}
@@ -349,6 +357,15 @@ export default function SubPage() {
                             {sId}
                           </a>
                           <div className="sub-link-actions">
+                            <Button
+                              size="small"
+                              href={appendRawView(subJsonUrl)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              icon={<DownloadOutlined />}
+                              aria-label={t('download')}
+                              title={t('download')}
+                            />
                             <Button size="small" icon={<CopyOutlined />} onClick={() => copy(subJsonUrl)} aria-label={t('copy')} title={t('copy')} />
                             <Popover
                               trigger="click"
@@ -381,6 +398,15 @@ export default function SubPage() {
                             {sId}
                           </a>
                           <div className="sub-link-actions">
+                            <Button
+                              size="small"
+                              href={appendRawView(subClashUrl)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              icon={<DownloadOutlined />}
+                              aria-label={t('download')}
+                              title={t('download')}
+                            />
                             <Button size="small" icon={<CopyOutlined />} onClick={() => copy(subClashUrl)} aria-label={t('copy')} title={t('copy')} />
                             <Popover
                               trigger="click"

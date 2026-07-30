@@ -212,6 +212,7 @@ func (s *InboundService) buildTargetClientFromSource(source model.Client, target
 	target.Password = ""
 	target.Auth = ""
 	target.Flow = ""
+	target.Secret = ""
 
 	targetProtocol := targetInbound.Protocol
 	switch targetProtocol {
@@ -227,6 +228,8 @@ func (s *InboundService) buildTargetClientFromSource(source model.Client, target
 		target.Password = s.generateRandomCredential(targetProtocol)
 	case model.Hysteria:
 		target.Auth = s.generateRandomCredential(targetProtocol)
+	case model.MTProto:
+		target.Secret = model.GenerateFakeTLSSecret(mtprotoDomainFromSettings(targetInbound.Settings))
 	default:
 		target.ID = s.generateRandomCredential(targetProtocol)
 	}
@@ -410,7 +413,37 @@ func (s *InboundService) GetClientInboundByEmail(email string) (traffic *xray.Cl
 			inbound, err = s.GetInbound(ids[0])
 		}
 	}
+	if err == nil && inbound != nil && !s.inboundHasClientEmail(inbound, email) {
+		// The pointed-at inbound still exists but no longer carries the client —
+		// the client was moved to another inbound (#6059). Resolve through the
+		// client_inbounds link to the inbound that actually hosts it now.
+		ids, idErr := s.clientService.GetInboundIdsForEmail(db, email)
+		if idErr == nil {
+			for _, id := range ids {
+				if id == inbound.Id {
+					continue
+				}
+				if other, oErr := s.GetInbound(id); oErr == nil && s.inboundHasClientEmail(other, email) {
+					inbound = other
+					break
+				}
+			}
+		}
+	}
 	return traffic, inbound, err
+}
+
+func (s *InboundService) inboundHasClientEmail(inbound *model.Inbound, email string) bool {
+	clients, err := s.GetClients(inbound)
+	if err != nil {
+		return false
+	}
+	for _, client := range clients {
+		if client.Email == email {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *InboundService) GetClientByEmail(clientEmail string) (*xray.ClientTraffic, *model.Client, error) {
