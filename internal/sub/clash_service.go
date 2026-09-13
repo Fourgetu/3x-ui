@@ -47,12 +47,16 @@ func (s *SubClashService) GetClash(subId string, host string) (string, string, e
 			continue
 		}
 		subReq.projectThroughFallbackMaster(inbound)
-		if hostEps := subReq.hostEndpoints(inbound, "clash"); len(hostEps) > 0 {
-			injectExternalProxy(inbound, hostEps)
-		}
+		hostEps := subReq.hostEndpoints(inbound, "clash")
 		for _, client := range clients {
 			seenEmails[client.Email] = struct{}{}
-			proxies = append(proxies, s.getProxies(subReq, inbound, client, host)...)
+			clientInbound, speedPort := subReq.withClientSpeedPort(inbound, client.Email)
+			if len(hostEps) > 0 {
+				clone := *clientInbound
+				injectExternalProxy(&clone, forceEndpointPort(hostEps, speedPort))
+				clientInbound = &clone
+			}
+			proxies = append(proxies, s.getProxies(subReq, clientInbound, client, host)...)
 		}
 	}
 	for _, ext := range externalLinks {

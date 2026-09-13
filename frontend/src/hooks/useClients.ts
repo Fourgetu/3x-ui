@@ -19,6 +19,7 @@ import {
   DelDepletedResultSchema,
   type ClientHydrate,
   type ClientRecord,
+  type ClientSpeedLimit,
   type ClientTraffic,
   type ClientsSummary,
   type ClientPageResponse,
@@ -44,7 +45,14 @@ export type ExternalLinkInput = {
   namePrefix: string;
 };
 
-export type { ClientRecord, ClientTraffic, ClientsSummary, InboundOption, ExternalLink };
+export type {
+  ClientRecord,
+  ClientSpeedLimit,
+  ClientTraffic,
+  ClientsSummary,
+  InboundOption,
+  ExternalLink,
+};
 
 const JSON_HEADERS = { headers: { 'Content-Type': 'application/json' } } as const;
 
@@ -355,6 +363,24 @@ export function useClients(options: UseClientsOptions = {}) {
     },
   });
 
+  const updateSpeedLimitMut = useMutation({
+    mutationFn: ({
+      email,
+      limit,
+    }: {
+      email: string;
+      limit: Pick<ClientSpeedLimit, 'inboundId' | 'enabled' | 'uploadMbps' | 'downloadMbps'>;
+    }) =>
+      HttpUtil.post(
+        `/panel/api/clients/speedLimits/${encodeURIComponent(email)}`,
+        limit,
+        JSON_HEADERS,
+      ),
+    onSuccess: (msg) => {
+      if (msg?.success) invalidateAll();
+    },
+  });
+
   const removeMut = useMutation({
     mutationFn: ({ email, keepTraffic }: { email: string; keepTraffic?: boolean }) => {
       const url = keepTraffic
@@ -539,6 +565,16 @@ export function useClients(options: UseClientsOptions = {}) {
       return updateMut.mutateAsync({ email, client });
     },
     [updateMut],
+  );
+  const updateSpeedLimit = useCallback(
+    (
+      email: string,
+      limit: Pick<ClientSpeedLimit, 'inboundId' | 'enabled' | 'uploadMbps' | 'downloadMbps'>,
+    ) => {
+      if (!email) return Promise.resolve(null as unknown as Msg<unknown>);
+      return updateSpeedLimitMut.mutateAsync({ email, limit });
+    },
+    [updateSpeedLimitMut],
   );
   const remove = useCallback(
     (email: string, keepTraffic = false) => {
@@ -805,6 +841,7 @@ export function useClients(options: UseClientsOptions = {}) {
     create,
     bulkCreate,
     update,
+    updateSpeedLimit,
     remove,
     bulkDelete,
     bulkAdjust,

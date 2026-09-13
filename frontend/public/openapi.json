@@ -3977,6 +3977,77 @@
         }
       }
     },
+    "/panel/api/inbounds/{id}/orphanCount": {
+      "get": {
+        "tags": [
+          "Inbounds"
+        ],
+        "summary": "Return the number of orphan clients attached to an inbound.",
+        "operationId": "get_panel_api_inbounds_id_orphanCount",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Inbound ID.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "msg": {
+                      "type": "string"
+                    },
+                    "obj": {}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/panel/api/inbounds/orphanCountBatch": {
+      "post": {
+        "tags": [
+          "Inbounds"
+        ],
+        "summary": "Return orphan-client counts for a set of inbound IDs.",
+        "operationId": "post_panel_api_inbounds_orphanCountBatch",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "msg": {
+                      "type": "string"
+                    },
+                    "obj": {}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/panel/api/inbounds/add": {
       "post": {
         "tags": [
@@ -5073,6 +5144,36 @@
                     "v25.9.15",
                     "v25.8.1"
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/panel/api/server/getCommonSubId": {
+      "get": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Return the shared subscription identifier used by the panel.",
+        "operationId": "get_panel_api_server_getCommonSubId",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "msg": {
+                      "type": "string"
+                    },
+                    "obj": {}
+                  }
                 }
               }
             }
@@ -6774,6 +6875,102 @@
                 "example": {
                   "success": true,
                   "msg": "Client updated"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/panel/api/clients/speedLimits/{email}": {
+      "get": {
+        "tags": [
+          "Clients"
+        ],
+        "summary": "List per-inbound identity-bound bandwidth limits for a client, including allocated route ports and runtime status.",
+        "operationId": "get_panel_api_clients_speedLimits_email",
+        "parameters": [
+          {
+            "name": "email",
+            "in": "path",
+            "required": true,
+            "description": "Client email (unique identifier).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "msg": {
+                      "type": "string"
+                    },
+                    "obj": {}
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Clients"
+        ],
+        "summary": "Create or update one client/inbound upload and download limit. Values are Mbps; 0 means unlimited. Runtime changes are applied before success is returned.",
+        "operationId": "post_panel_api_clients_speedLimits_email",
+        "parameters": [
+          {
+            "name": "email",
+            "in": "path",
+            "required": true,
+            "description": "Client email (unique identifier).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              },
+              "example": {
+                "inboundId": 3,
+                "enabled": true,
+                "uploadMbps": 10,
+                "downloadMbps": 20
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "msg": {
+                      "type": "string"
+                    },
+                    "obj": {}
+                  }
                 }
               }
             }

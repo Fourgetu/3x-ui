@@ -211,6 +211,9 @@ func (s *ClientService) DeleteOrphans() (int, error) {
 			return e
 		}
 		for _, batch := range chunkInts(ids, sqlInChunk) {
+			if e := tx.Where("client_id IN ?", batch).Delete(&model.ClientSpeedLimit{}).Error; e != nil {
+				return e
+			}
 			if e := tx.Where("client_id IN ?", batch).Delete(&model.ClientInbound{}).Error; e != nil {
 				return e
 			}

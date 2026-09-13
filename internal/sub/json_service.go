@@ -92,14 +92,18 @@ func (s *SubJsonService) GetJson(subId string, host string, alwaysReturnArray bo
 			continue
 		}
 		subReq.projectThroughFallbackMaster(inbound)
-		if hostEps := subReq.hostEndpoints(inbound, "json"); len(hostEps) > 0 {
-			injectExternalProxy(inbound, hostEps)
-		}
+		hostEps := subReq.hostEndpoints(inbound, "json")
 
 		var inboundConfigs []json_util.RawMessage
 		for _, client := range clients {
 			seenEmails[client.Email] = struct{}{}
-			inboundConfigs = append(inboundConfigs, s.getConfig(subReq, inbound, client, host)...)
+			clientInbound, speedPort := subReq.withClientSpeedPort(inbound, client.Email)
+			if len(hostEps) > 0 {
+				clone := *clientInbound
+				injectExternalProxy(&clone, forceEndpointPort(hostEps, speedPort))
+				clientInbound = &clone
+			}
+			inboundConfigs = append(inboundConfigs, s.getConfig(subReq, clientInbound, client, host)...)
 		}
 		if len(inboundConfigs) > 0 {
 			entries = append(entries, subConfigEntry{

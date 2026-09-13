@@ -18,22 +18,23 @@ import (
 // so the list payload stays compact even when the panel manages thousands
 // of clients. Modals that need the full record still call /get/:email.
 type ClientSlim struct {
-	Email      string              `json:"email"`
-	SubID      string              `json:"subId"`
-	Enable     bool                `json:"enable"`
-	TotalGB    int64               `json:"totalGB"`
-	ExpiryTime int64               `json:"expiryTime"`
-	LimitIP    int                 `json:"limitIp"`
-	LimitHwid  int                 `json:"limitHwid"`
-	Reset      int                 `json:"reset"`
-	ResetDay   int                 `json:"resetDay"`
-	ResetMax   int                 `json:"resetMax"`
-	Group      string              `json:"group,omitempty"`
-	Comment    string              `json:"comment,omitempty"`
-	InboundIds []int               `json:"inboundIds"`
-	Traffic    *xray.ClientTraffic `json:"traffic,omitempty"`
-	CreatedAt  int64               `json:"createdAt"`
-	UpdatedAt  int64               `json:"updatedAt"`
+	Email       string                   `json:"email"`
+	SubID       string                   `json:"subId"`
+	Enable      bool                     `json:"enable"`
+	TotalGB     int64                    `json:"totalGB"`
+	ExpiryTime  int64                    `json:"expiryTime"`
+	LimitIP     int                      `json:"limitIp"`
+	LimitHwid   int                      `json:"limitHwid"`
+	Reset       int                      `json:"reset"`
+	ResetDay    int                      `json:"resetDay"`
+	ResetMax    int                      `json:"resetMax"`
+	Group       string                   `json:"group,omitempty"`
+	Comment     string                   `json:"comment,omitempty"`
+	InboundIds  []int                    `json:"inboundIds"`
+	SpeedLimits []model.ClientSpeedLimit `json:"speedLimits"`
+	Traffic     *xray.ClientTraffic      `json:"traffic,omitempty"`
+	CreatedAt   int64                    `json:"createdAt"`
+	UpdatedAt   int64                    `json:"updatedAt"`
 }
 
 // ClientPageParams are the query params accepted by /panel/api/clients/list/paged.
@@ -458,6 +459,14 @@ func (q clientQuery) pageRows(params ClientPageParams, onlines []string, offset,
 	for _, l := range links {
 		attachments[l.ClientId] = append(attachments[l.ClientId], l.InboundId)
 	}
+	var speedLimitRows []model.ClientSpeedLimit
+	if err := q.db.Where("client_id IN ?", ids).Order("inbound_id ASC").Find(&speedLimitRows).Error; err != nil {
+		return nil, err
+	}
+	speedLimits := make(map[int][]model.ClientSpeedLimit, len(ids))
+	for _, row := range speedLimitRows {
+		speedLimits[row.ClientID] = append(speedLimits[row.ClientID], row)
+	}
 
 	trafficByEmail := make(map[string]*xray.ClientTraffic, len(emails))
 	if len(emails) > 0 {
@@ -480,6 +489,7 @@ func (q clientQuery) pageRows(params ClientPageParams, onlines []string, offset,
 		items = append(items, toClientSlim(ClientWithAttachments{
 			ClientRecord: *rec,
 			InboundIds:   attachments[rec.Id],
+			SpeedLimits:  speedLimits[rec.Id],
 			Traffic:      trafficByEmail[rec.Email],
 		}))
 	}
@@ -616,22 +626,23 @@ func sqlInt(v int64) string {
 
 func toClientSlim(c ClientWithAttachments) ClientSlim {
 	return ClientSlim{
-		Email:      c.Email,
-		SubID:      c.SubID,
-		Enable:     c.Enable,
-		TotalGB:    c.TotalGB,
-		ExpiryTime: c.ExpiryTime,
-		LimitIP:    c.LimitIP,
-		LimitHwid:  c.LimitHwid,
-		Reset:      c.Reset,
-		ResetDay:   c.ResetDay,
-		ResetMax:   c.ResetMax,
-		Group:      c.Group,
-		Comment:    c.Comment,
-		InboundIds: c.InboundIds,
-		Traffic:    c.Traffic,
-		CreatedAt:  c.CreatedAt,
-		UpdatedAt:  c.UpdatedAt,
+		Email:       c.Email,
+		SubID:       c.SubID,
+		Enable:      c.Enable,
+		TotalGB:     c.TotalGB,
+		ExpiryTime:  c.ExpiryTime,
+		LimitIP:     c.LimitIP,
+		LimitHwid:   c.LimitHwid,
+		Reset:       c.Reset,
+		ResetDay:    c.ResetDay,
+		ResetMax:    c.ResetMax,
+		Group:       c.Group,
+		Comment:     c.Comment,
+		InboundIds:  c.InboundIds,
+		SpeedLimits: c.SpeedLimits,
+		Traffic:     c.Traffic,
+		CreatedAt:   c.CreatedAt,
+		UpdatedAt:   c.UpdatedAt,
 	}
 }
 

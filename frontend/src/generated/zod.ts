@@ -572,6 +572,8 @@ export const InboundOptionSchema = z.object({
   remark: z.string(),
   shareAddr: z.string().optional(),
   shareAddrStrategy: z.string().optional(),
+  speedLimitSupported: z.boolean(),
+  speedLimitUnsupportedReason: z.string().optional(),
   ssMethod: z.string(),
   tag: z.string(),
   tlsFlowCapable: z.boolean(),

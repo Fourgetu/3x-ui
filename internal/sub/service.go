@@ -73,6 +73,7 @@ type SubService struct {
 	// with the clients array left out; generators read only inbound-level
 	// fields (encryption, method, version, …) from it.
 	settingsByInbound map[int]map[string]any
+	clientSpeedPorts  map[int]map[string]int
 }
 
 // NewSubService creates a new subscription service with the given configuration.
@@ -111,6 +112,7 @@ func (s *SubService) PrepareForRequest(host string) {
 	s.settingsByInbound = map[int]map[string]any{}
 	s.loadNodes()
 	s.loadRemarkSettings()
+	s.loadClientSpeedPorts()
 }
 
 // primeLinkClients caches clients (first occurrence per email, matching the
@@ -329,11 +331,12 @@ func (s *SubService) getSubs(subId string) ([]string, []string, int64, xray.Clie
 			if client.Enable {
 				hasEnabledClient = true
 			}
+			clientInbound, speedPort := s.withClientSpeedPort(inbound, client.Email)
 			var link string
 			if len(hostEps) > 0 {
-				link = s.linkFromHosts(inbound, client, hostEps)
+				link = s.linkFromHosts(clientInbound, client, forceEndpointPort(hostEps, speedPort))
 			} else {
-				link = s.GetLink(inbound, client.Email)
+				link = s.GetLink(clientInbound, client.Email)
 			}
 			result = append(result, link)
 			emails = append(emails, client.Email)
@@ -383,11 +386,12 @@ func (s *SubService) inboundLinks(inbound *model.Inbound) []string {
 			continue
 		}
 		seen[key] = struct{}{}
+		clientInbound, speedPort := s.withClientSpeedPort(inbound, client.Email)
 		var link string
 		if len(hostEps) > 0 {
-			link = s.linkFromHosts(inbound, client, hostEps)
+			link = s.linkFromHosts(clientInbound, client, forceEndpointPort(hostEps, speedPort))
 		} else {
-			link = s.GetLink(inbound, client.Email)
+			link = s.GetLink(clientInbound, client.Email)
 		}
 		out = append(out, splitLinkLines(link)...)
 	}

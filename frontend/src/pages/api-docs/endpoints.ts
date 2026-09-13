@@ -149,6 +149,17 @@ export const sections: readonly Section[] = [
         params: [{ name: 'id', in: 'path', type: 'number', desc: 'Inbound ID.' }],
       },
       {
+        method: 'GET',
+        path: '/panel/api/inbounds/:id/orphanCount',
+        summary: 'Return the number of orphan clients attached to an inbound.',
+        params: [{ name: 'id', in: 'path', type: 'number', desc: 'Inbound ID.' }],
+      },
+      {
+        method: 'POST',
+        path: '/panel/api/inbounds/orphanCountBatch',
+        summary: 'Return orphan-client counts for a set of inbound IDs.',
+      },
+      {
         method: 'POST',
         path: '/panel/api/inbounds/add',
         summary:
@@ -401,6 +412,11 @@ export const sections: readonly Section[] = [
         path: '/panel/api/server/getXrayVersion',
         summary: 'List Xray binary versions available for install on this host.',
         response: '{\n  "success": true,\n  "obj": ["v25.10.31", "v25.9.15", "v25.8.1"]\n}',
+      },
+      {
+        method: 'GET',
+        path: '/panel/api/server/getCommonSubId',
+        summary: 'Return the shared subscription identifier used by the panel.',
       },
       {
         method: 'GET',
@@ -901,6 +917,44 @@ export const sections: readonly Section[] = [
         ],
         body: '{\n  "email": "alice@example.com",\n  "totalGB": 107374182400,\n  "expiryTime": 1767225600000,\n  "limitHwid": 2,\n  "tgId": 123456789,\n  "enable": true\n}',
         response: '{\n  "success": true,\n  "msg": "Client updated"\n}',
+      },
+      {
+        method: 'GET',
+        path: '/panel/api/clients/speedLimits/:email',
+        summary:
+          'List per-inbound identity-bound bandwidth limits for a client, including allocated route ports and runtime status.',
+        params: [
+          { name: 'email', in: 'path', type: 'string', desc: 'Client email (unique identifier).' },
+        ],
+      },
+      {
+        method: 'POST',
+        path: '/panel/api/clients/speedLimits/:email',
+        summary:
+          'Create or update one client/inbound upload and download limit. Values are Mbps; 0 means unlimited. Runtime changes are applied before success is returned.',
+        params: [
+          { name: 'email', in: 'path', type: 'string', desc: 'Client email (unique identifier).' },
+          { name: 'inboundId', in: 'body (json)', type: 'integer', desc: 'Attached inbound ID.' },
+          {
+            name: 'enabled',
+            in: 'body (json)',
+            type: 'boolean',
+            desc: 'Enable the identity-bound route.',
+          },
+          {
+            name: 'uploadMbps',
+            in: 'body (json)',
+            type: 'integer',
+            desc: 'Upload rate in Mbps, 0 = unlimited.',
+          },
+          {
+            name: 'downloadMbps',
+            in: 'body (json)',
+            type: 'integer',
+            desc: 'Download rate in Mbps, 0 = unlimited.',
+          },
+        ],
+        body: '{\n  "inboundId": 3,\n  "enabled": true,\n  "uploadMbps": 10,\n  "downloadMbps": 20\n}',
       },
       {
         method: 'POST',

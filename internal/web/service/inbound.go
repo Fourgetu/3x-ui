@@ -329,10 +329,12 @@ type InboundOption struct {
 	// hosting node's externally reachable address (empty for this panel's own
 	// inbounds); Listen and ShareAddrStrategy/ShareAddr feed the same
 	// node→listen→custom fallback the share/QR links already use.
-	NodeAddress       string `json:"nodeAddress,omitempty"`
-	Listen            string `json:"listen,omitempty"`
-	ShareAddr         string `json:"shareAddr,omitempty"`
-	ShareAddrStrategy string `json:"shareAddrStrategy,omitempty"`
+	NodeAddress                 string `json:"nodeAddress,omitempty"`
+	Listen                      string `json:"listen,omitempty"`
+	ShareAddr                   string `json:"shareAddr,omitempty"`
+	ShareAddrStrategy           string `json:"shareAddrStrategy,omitempty"`
+	SpeedLimitSupported         bool   `json:"speedLimitSupported"`
+	SpeedLimitUnsupportedReason string `json:"speedLimitUnsupportedReason,omitempty"`
 }
 
 func (s *InboundService) GetInboundOptions(userId int) ([]InboundOption, error) {
@@ -369,25 +371,28 @@ func (s *InboundService) GetInboundOptions(userId int) ([]InboundOption, error) 
 		if shareAddrStrategy == "node" {
 			shareAddrStrategy = ""
 		}
+		speedNetworks, speedReason := speedLimitNetworks(&model.Inbound{Protocol: model.Protocol(r.Protocol), StreamSettings: r.StreamSettings, NodeID: r.NodeId})
 		out = append(out, InboundOption{
-			Id:                r.Id,
-			Remark:            r.Remark,
-			Tag:               r.Tag,
-			Protocol:          r.Protocol,
-			Port:              r.Port,
-			Enable:            r.Enable,
-			TlsFlowCapable:    !r.DisableFlow && inboundCanEnableTlsFlow(r.Protocol, r.StreamSettings, r.Settings),
-			SsMethod:          inboundShadowsocksMethod(r.Protocol, r.Settings),
-			WgPublicKey:       wgPublicKey,
-			WgMtu:             wgMtu,
-			WgDns:             wgDns,
-			MtprotoDomain:     inboundMtprotoDomain(r.Protocol, r.Settings),
-			AwgServer:         inboundAmneziaWGServer(r.Protocol, r.Settings),
-			NodeId:            r.NodeId,
-			NodeAddress:       r.NodeAddress,
-			Listen:            r.Listen,
-			ShareAddr:         r.ShareAddr,
-			ShareAddrStrategy: shareAddrStrategy,
+			Id:                          r.Id,
+			Remark:                      r.Remark,
+			Tag:                         r.Tag,
+			Protocol:                    r.Protocol,
+			Port:                        r.Port,
+			Enable:                      r.Enable,
+			TlsFlowCapable:              !r.DisableFlow && inboundCanEnableTlsFlow(r.Protocol, r.StreamSettings, r.Settings),
+			SsMethod:                    inboundShadowsocksMethod(r.Protocol, r.Settings),
+			WgPublicKey:                 wgPublicKey,
+			WgMtu:                       wgMtu,
+			WgDns:                       wgDns,
+			MtprotoDomain:               inboundMtprotoDomain(r.Protocol, r.Settings),
+			AwgServer:                   inboundAmneziaWGServer(r.Protocol, r.Settings),
+			NodeId:                      r.NodeId,
+			NodeAddress:                 r.NodeAddress,
+			Listen:                      r.Listen,
+			ShareAddr:                   r.ShareAddr,
+			ShareAddrStrategy:           shareAddrStrategy,
+			SpeedLimitSupported:         len(speedNetworks) > 0,
+			SpeedLimitUnsupportedReason: speedReason,
 		})
 	}
 	return out, nil

@@ -701,6 +701,9 @@ func (s *ClientService) Delete(inboundSvc *InboundService, id int, keepTraffic b
 				return err
 			}
 		}
+		if err := tx.Where("client_id = ?", id).Delete(&model.ClientSpeedLimit{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("client_id = ?", id).Delete(&model.ClientInbound{}).Error; err != nil {
 			return err
 		}

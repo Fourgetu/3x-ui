@@ -2304,6 +2304,12 @@ export const SCHEMAS: Record<string, unknown> = {
       "shareAddrStrategy": {
         "type": "string"
       },
+      "speedLimitSupported": {
+        "type": "boolean"
+      },
+      "speedLimitUnsupportedReason": {
+        "type": "string"
+      },
       "ssMethod": {
         "type": "string"
       },
@@ -2331,6 +2337,7 @@ export const SCHEMAS: Record<string, unknown> = {
       "port",
       "protocol",
       "remark",
+      "speedLimitSupported",
       "ssMethod",
       "tag",
       "tlsFlowCapable"

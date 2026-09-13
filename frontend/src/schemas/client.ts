@@ -21,6 +21,21 @@ export const ClientTrafficSchema = z.object({
   resetCount: z.number().optional(),
 });
 
+export const ClientSpeedLimitSchema = z.object({
+  inboundId: z.number().int(),
+  inboundRemark: z.string().optional().default(''),
+  protocol: z.string().optional().default(''),
+  enabled: z.boolean().default(false),
+  uploadMbps: z.number().int().min(0).default(0),
+  downloadMbps: z.number().int().min(0).default(0),
+  externalPort: z.number().int().nullable().optional(),
+  internalPort: z.number().int().nullable().optional(),
+  supported: z.boolean().optional().default(true),
+  unsupportedReason: z.string().optional().default(''),
+  runtimeStatus: z.string().optional().default('disabled'),
+  lastError: z.string().optional().default(''),
+});
+
 export const ClientRecordSchema = z
   .object({
     id: z.number().optional(),
@@ -45,6 +60,11 @@ export const ClientRecordSchema = z
     trafficReset: z.string().optional(),
     trafficResetDay: z.number().optional(),
     inboundIds: nullableNumberArray.optional(),
+    speedLimits: z
+      .array(ClientSpeedLimitSchema)
+      .nullable()
+      .transform((v) => v ?? [])
+      .optional(),
     traffic: ClientTrafficSchema.nullable().optional(),
     reverse: z.object({ tag: z.string().optional() }).loose().nullable().optional(),
     privateKey: z.string().optional(),
@@ -124,6 +144,8 @@ export const InboundOptionSchema = z
     listen: z.string().optional(),
     shareAddr: z.string().optional(),
     shareAddrStrategy: z.string().optional(),
+    speedLimitSupported: z.boolean().optional(),
+    speedLimitUnsupportedReason: z.string().optional(),
   })
   .loose();
 
@@ -191,6 +213,11 @@ export const ClientHydrateSchema = z.object({
   inboundIds: nullableNumberArray,
   externalLinks: ExternalLinkListSchema.optional(),
   tunnelAllowedIPs: z.record(z.number().int(), z.string()).optional(),
+  speedLimits: z
+    .array(ClientSpeedLimitSchema)
+    .nullable()
+    .transform((v) => v ?? [])
+    .optional(),
 });
 
 export const BulkAdjustResultSchema = z.object({
@@ -359,6 +386,7 @@ export const ClientBulkAddFormSchema = z.object({
 
 export type ClientRecord = z.infer<typeof ClientRecordSchema>;
 export type ClientTraffic = z.infer<typeof ClientTrafficSchema>;
+export type ClientSpeedLimit = z.infer<typeof ClientSpeedLimitSchema>;
 export type InboundOption = z.infer<typeof InboundOptionSchema>;
 export type ExternalLink = z.infer<typeof ExternalLinkSchema>;
 export type ClientsSummary = z.infer<typeof ClientsSummarySchema>;

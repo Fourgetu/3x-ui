@@ -262,6 +262,10 @@ func (s *ClientService) reconcileInboundLinks(tx *gorm.DB, inboundId int, wanted
 
 	for _, batch := range chunkInts(toDelete, sqlInChunk) {
 		if err := tx.Where("inbound_id = ? AND client_id IN ?", inboundId, batch).
+			Delete(&model.ClientSpeedLimit{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("inbound_id = ? AND client_id IN ?", inboundId, batch).
 			Delete(&model.ClientInbound{}).Error; err != nil {
 			return err
 		}
@@ -291,6 +295,9 @@ func (s *ClientService) reconcileInboundLinks(tx *gorm.DB, inboundId int, wanted
 func (s *ClientService) DetachInbound(tx *gorm.DB, inboundId int) error {
 	if tx == nil {
 		tx = database.GetDB()
+	}
+	if err := tx.Where("inbound_id = ?", inboundId).Delete(&model.ClientSpeedLimit{}).Error; err != nil {
+		return err
 	}
 	return tx.Where("inbound_id = ?", inboundId).Delete(&model.ClientInbound{}).Error
 }

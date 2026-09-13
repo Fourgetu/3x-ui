@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AutoComplete,
+  Alert,
   Button,
   Col,
+  Divider,
   Form,
   Input,
   InputNumber,
@@ -42,6 +44,7 @@ import ClientHwidListModal from '@/components/clients/ClientHwidList';
 import { TLS_FLOW_CONTROL, TRAFFIC_RESETS } from '@/schemas/primitives';
 import type {
   ClientRecord,
+  ClientSpeedLimit,
   InboundOption,
   ExternalLink,
   ExternalLinkInput,
@@ -91,12 +94,14 @@ interface SaveMetaEdit {
   attach: number[];
   detach: number[];
   externalLinks: ExternalLinkInput[];
+  speedLimits: ClientSpeedLimit[];
 }
 
 interface SaveMetaCreate {
   isEdit: false;
   email: string;
   externalLinks: ExternalLinkInput[];
+  speedLimits: ClientSpeedLimit[];
 }
 
 interface SaveCreatePayload {
@@ -110,6 +115,7 @@ interface ClientFormModalProps {
   client: ClientRecord | null;
   inbounds: InboundOption[];
   attachedExternalLinks?: ExternalLink[];
+  attachedSpeedLimits?: ClientSpeedLimit[];
   attachedIds?: number[];
   tunnelAllowedIPs?: Record<number, string>;
   tgBotEnable?: boolean;
@@ -239,6 +245,7 @@ export default function ClientFormModal({
   client,
   inbounds,
   attachedExternalLinks = [],
+  attachedSpeedLimits = [],
   attachedIds = [],
   tunnelAllowedIPs = {},
   tgBotEnable = false,
@@ -275,6 +282,7 @@ export default function ClientFormModal({
   } = useFieldArray({ control: methods.control, name: 'externalLinks' });
 
   const [submitting, setSubmitting] = useState(false);
+  const [speedLimits, setSpeedLimits] = useState<ClientSpeedLimit[]>([]);
   const [resetting, setResetting] = useState(false);
   const [clientIps, setClientIps] = useState<ClientIpInfo[]>([]);
   const [ipsLoading, setIpsLoading] = useState(false);
@@ -333,6 +341,7 @@ export default function ClientFormModal({
 
   useEffect(() => {
     if (!open) return;
+    setSpeedLimits(attachedSpeedLimits.map((limit) => ({ ...limit })));
     setIpsModalOpen(false);
     setHwidsModalOpen(false);
 
@@ -552,6 +561,42 @@ export default function ClientFormModal({
     [inbounds, inboundIds],
   );
 
+  const selectedSpeedLimits = useMemo(
+    () =>
+      (inboundIds || []).map((inboundId) => {
+        const existing = speedLimits.find((limit) => limit.inboundId === inboundId);
+        if (existing) return existing;
+        const inbound = inbounds.find((row) => row.id === inboundId);
+        return {
+          inboundId,
+          inboundRemark: inbound?.remark || inbound?.tag || `#${inboundId}`,
+          protocol: inbound?.protocol || '',
+          enabled: false,
+          uploadMbps: 0,
+          downloadMbps: 0,
+          supported: inbound?.speedLimitSupported === true,
+          unsupportedReason: inbound?.speedLimitUnsupportedReason || '',
+          runtimeStatus: 'disabled',
+          lastError: '',
+        } satisfies ClientSpeedLimit;
+      }),
+    [inboundIds, inbounds, speedLimits],
+  );
+
+  function updateSpeedLimit(inboundId: number, patch: Partial<ClientSpeedLimit>) {
+    setSpeedLimits((current) => {
+      const base =
+        current.find((limit) => limit.inboundId === inboundId) ||
+        selectedSpeedLimits.find((limit) => limit.inboundId === inboundId);
+      if (!base) return current;
+      const next = { ...base, ...patch };
+      const exists = current.some((limit) => limit.inboundId === inboundId);
+      return exists
+        ? current.map((limit) => (limit.inboundId === inboundId ? next : limit))
+        : [...current, next];
+    });
+  }
+
   const expiryDayjs = useMemo<Dayjs | null>(
     () => (expiryDate > 0 ? dayjs(expiryDate) : null),
     [expiryDate],
@@ -744,6 +789,10 @@ export default function ClientFormModal({
         namePrefix: (r.namePrefix || '').trim(),
       }))
       .filter((r) => r.value !== '');
+    const submittedSpeedLimits = selectedSpeedLimits.filter(
+      (limit) =>
+        limit.enabled || attachedSpeedLimits.some((saved) => saved.inboundId === limit.inboundId),
+    );
 
     setSubmitting(true);
     try {
@@ -759,11 +808,17 @@ export default function ClientFormModal({
           attach: toAttach,
           detach: toDetach,
           externalLinks,
+          speedLimits: submittedSpeedLimits,
         });
       } else {
         msg = await save(
           { client: clientPayload, inboundIds: values.inboundIds },
-          { isEdit: false, email: clientPayload.email as string, externalLinks },
+          {
+            isEdit: false,
+            email: clientPayload.email as string,
+            externalLinks,
+            speedLimits: submittedSpeedLimits,
+          },
         );
       }
       if (msg?.success) close();
@@ -1084,6 +1139,95 @@ export default function ClientFormModal({
                           }}
                         />
                       </Form.Item>
+
+                      <Divider>{t('pages.clients.bandwidthLimit')}</Divider>
+                      <Typography.Paragraph type="secondary">
+                        {t('pages.clients.bandwidthLimitDesc')}
+                      </Typography.Paragraph>
+                      {selectedSpeedLimits.length === 0 ? (
+                        <Alert type="info" showIcon message={t('pages.clients.selectInbound')} />
+                      ) : (
+                        selectedSpeedLimits.map((limit) => {
+                          const inbound = inbounds.find((row) => row.id === limit.inboundId);
+                          const label = formatInboundLabel(
+                            inbound?.tag,
+                            inbound?.remark,
+                            inbound?.port,
+                          );
+                          return (
+                            <div key={limit.inboundId} style={{ marginBottom: 16 }}>
+                              <Space wrap style={{ marginBottom: 8 }}>
+                                <Typography.Text strong>{label}</Typography.Text>
+                                <Switch
+                                  checked={limit.enabled}
+                                  disabled={!limit.supported}
+                                  checkedChildren={t('enable')}
+                                  unCheckedChildren={t('disabled')}
+                                  onChange={(checked) =>
+                                    updateSpeedLimit(limit.inboundId, { enabled: checked })
+                                  }
+                                />
+                                {limit.runtimeStatus === 'running' && (
+                                  <Tag color="green">{t('pages.clients.speedLimitRunning')}</Tag>
+                                )}
+                                {limit.runtimeStatus === 'error' && (
+                                  <Tag color="red">{t('pages.clients.speedLimitFailed')}</Tag>
+                                )}
+                              </Space>
+                              {!limit.supported ? (
+                                <Alert
+                                  type="warning"
+                                  showIcon
+                                  message={
+                                    limit.unsupportedReason ||
+                                    t('pages.clients.speedLimitUnsupported')
+                                  }
+                                />
+                              ) : (
+                                <Row gutter={16}>
+                                  <Col xs={24} md={12}>
+                                    <Form.Item label={t('pages.clients.downloadLimit')}>
+                                      <InputNumber
+                                        min={0}
+                                        max={100000}
+                                        addonAfter="Mbps"
+                                        disabled={!limit.enabled}
+                                        value={limit.downloadMbps}
+                                        style={{ width: '100%' }}
+                                        onChange={(value) =>
+                                          updateSpeedLimit(limit.inboundId, {
+                                            downloadMbps: Number(value) || 0,
+                                          })
+                                        }
+                                      />
+                                    </Form.Item>
+                                  </Col>
+                                  <Col xs={24} md={12}>
+                                    <Form.Item label={t('pages.clients.uploadLimit')}>
+                                      <InputNumber
+                                        min={0}
+                                        max={100000}
+                                        addonAfter="Mbps"
+                                        disabled={!limit.enabled}
+                                        value={limit.uploadMbps}
+                                        style={{ width: '100%' }}
+                                        onChange={(value) =>
+                                          updateSpeedLimit(limit.inboundId, {
+                                            uploadMbps: Number(value) || 0,
+                                          })
+                                        }
+                                      />
+                                    </Form.Item>
+                                  </Col>
+                                </Row>
+                              )}
+                              {limit.lastError && (
+                                <Alert type="error" showIcon message={limit.lastError} />
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
 
                       <Form.Item>
                         <Switch
