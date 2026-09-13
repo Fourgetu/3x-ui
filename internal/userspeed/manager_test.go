@@ -35,6 +35,14 @@ func TestBuildConfigAndLimiterDirections(t *testing.T) {
 	if len(cfg.Limiters) != 2 || len(cfg.Services) != 3 {
 		t.Fatalf("generated %d limiters and %d services, want 2 and 3", len(cfg.Limiters), len(cfg.Services))
 	}
+	for _, service := range cfg.Services {
+		if service.Limiter == "" {
+			t.Fatalf("service %q has no limiter", service.Name)
+		}
+		if got := service.Metadata["limiter.scope"]; got != "service" {
+			t.Fatalf("service %q limiter.scope = %v, want service", service.Name, got)
+		}
+	}
 	limiterDir := filepath.Join(dir, "limiters")
 	if err := os.MkdirAll(limiterDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -48,6 +56,36 @@ func TestBuildConfigAndLimiterDirections(t *testing.T) {
 	}
 	if got, want := string(value), "$ 1250000B 2500000B\n"; got != want {
 		t.Fatalf("limiter input/output = %q, want %q", got, want)
+	}
+}
+
+func TestLimitedUserServiceMetadataAcrossRatesAndUnlimited(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XUI_GOST_CONFIG_PATH", filepath.Join(dir, "config.json"))
+	routes := []DesiredRoute{
+		{ID: "limited-10-10", ExternalPort: 32010, InternalPort: 42010, UploadMbps: 10, DownloadMbps: 10, Networks: []string{"tcp"}},
+		{ID: "limited-20-50", ExternalPort: 32011, InternalPort: 42011, UploadMbps: 20, DownloadMbps: 50, Networks: []string{"tcp", "udp"}},
+		{ID: "unlimited-0-0", ExternalPort: 32012, InternalPort: 42012, UploadMbps: 0, DownloadMbps: 0, Networks: []string{"tcp"}},
+	}
+	cfg := buildConfig(routes)
+	if len(cfg.Services) != 4 {
+		t.Fatalf("generated %d services, want 4", len(cfg.Services))
+	}
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded gostConfig
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, service := range decoded.Services {
+		if service.Limiter == "" {
+			t.Fatalf("service %q has no limiter", service.Name)
+		}
+		if got := service.Metadata["limiter.scope"]; got != "service" {
+			t.Fatalf("service %q limiter.scope = %v, want service", service.Name, got)
+		}
 	}
 }
 

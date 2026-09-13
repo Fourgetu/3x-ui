@@ -65,12 +65,13 @@ type gostFile struct {
 }
 
 type gostService struct {
-	Name      string        `json:"name"`
-	Addr      string        `json:"addr"`
-	Limiter   string        `json:"limiter"`
-	Handler   gostType      `json:"handler"`
-	Listener  gostListener  `json:"listener"`
-	Forwarder gostForwarder `json:"forwarder"`
+	Name      string         `json:"name"`
+	Addr      string         `json:"addr"`
+	Limiter   string         `json:"limiter"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	Handler   gostType       `json:"handler"`
+	Listener  gostListener   `json:"listener"`
+	Forwarder gostForwarder  `json:"forwarder"`
 }
 
 type gostType struct {
@@ -278,7 +279,8 @@ func buildConfig(routes []DesiredRoute) gostConfig {
 			}
 			cfg.Services = append(cfg.Services, gostService{
 				Name: route.ID + "-" + network, Addr: "0.0.0.0:" + strconv.Itoa(route.ExternalPort), Limiter: limiter,
-				Handler: gostType{Type: network}, Listener: listener,
+				Metadata: map[string]any{"limiter.scope": "service"},
+				Handler:  gostType{Type: network}, Listener: listener,
 				Forwarder: gostForwarder{
 					Nodes:    []gostNode{{Name: "xray", Addr: "127.0.0.1:" + strconv.Itoa(route.InternalPort)}},
 					Selector: gostSelector{Strategy: "fifo", MaxFails: 1, FailTimeout: "10s"},
