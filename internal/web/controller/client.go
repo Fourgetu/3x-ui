@@ -32,10 +32,11 @@ func parseInboundIdsQuery(raw string) []int {
 }
 
 type ClientController struct {
-	clientService  service.ClientService
-	inboundService service.InboundService
-	xrayService    service.XrayService
-	settingService service.SettingService
+	clientService     service.ClientService
+	inboundService    service.InboundService
+	xrayService       service.XrayService
+	settingService    service.SettingService
+	speedLimitService service.UserSpeedLimitService
 }
 
 func NewClientController(g *gin.RouterGroup) *ClientController {
@@ -52,9 +53,11 @@ func (a *ClientController) initRouter(g *gin.RouterGroup) {
 	g.GET("/traffic/:email", a.getTrafficByEmail)
 	g.GET("/subLinks/:subId", a.getSubLinks)
 	g.GET("/links/:email", a.getClientLinks)
+	g.GET("/speedLimits/:email", a.getSpeedLimits)
 
 	g.POST("/add", a.create)
 	g.POST("/update/:email", a.update)
+	g.POST("/speedLimits/:email", a.updateSpeedLimit)
 	g.POST("/del/:email", a.delete)
 	g.POST("/:email/attach", a.attach)
 	g.POST("/:email/detach", a.detach)
@@ -131,12 +134,17 @@ func (a *ClientController) buildClientPayload(rec *model.ClientRecord) (gin.H, e
 	if err != nil {
 		return nil, err
 	}
+	speedLimits, err := a.speedLimitService.ListByEmail(rec.Email)
+	if err != nil {
+		return nil, err
+	}
 	return gin.H{
 		"client":           rec,
 		"inboundIds":       inboundIds,
 		"externalLinks":    externalLinks,
 		"usedTraffic":      usedTraffic,
 		"tunnelAllowedIPs": tunnelAllowedIPs,
+		"speedLimits":      speedLimits,
 	}, nil
 }
 
@@ -213,10 +221,41 @@ func (a *ClientController) update(c *gin.Context) {
 		jsonMsg(c, I18nWeb(c, "somethingWentWrong"), err)
 		return
 	}
+	if speedLimits, speedErr := a.speedLimitService.ListByEmail(req.Email); speedErr == nil {
+		for _, limit := range speedLimits {
+			if limit.Enabled {
+				if applyErr := a.speedLimitService.Apply(&a.xrayService); applyErr != nil {
+					jsonMsg(c, I18nWeb(c, "somethingWentWrong"), applyErr)
+					return
+				}
+				break
+			}
+		}
+	}
 	jsonMsgObj(c, I18nWeb(c, "pages.inbounds.toasts.inboundClientUpdateSuccess"), pendingNodeObj(a.clientService.HasPendingNode(&a.inboundService, email)), nil)
 	if needRestart {
 		a.xrayService.SetToNeedRestart()
 	}
+	notifyClientsChanged()
+}
+
+func (a *ClientController) getSpeedLimits(c *gin.Context) {
+	rows, err := a.speedLimitService.ListByEmail(c.Param("email"))
+	jsonObj(c, rows, err)
+}
+
+func (a *ClientController) updateSpeedLimit(c *gin.Context) {
+	var request service.ClientSpeedLimitUpdate
+	if err := c.ShouldBindJSON(&request); err != nil {
+		jsonMsg(c, I18nWeb(c, "somethingWentWrong"), err)
+		return
+	}
+	result, err := a.speedLimitService.Update(c.Param("email"), request, &a.xrayService)
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "somethingWentWrong"), err)
+		return
+	}
+	jsonObj(c, result, nil)
 	notifyClientsChanged()
 }
 

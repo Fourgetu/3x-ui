@@ -68,7 +68,7 @@ ENV XUI_MAIN_FOLDER="/app"
 ENV XUI_ENABLE_FAIL2BAN="true"
 ENV XUI_DB_TYPE=""
 ENV XUI_DB_DSN=""
-EXPOSE 2053
+EXPOSE 2053 32000-32999/tcp 32000-32999/udp
 VOLUME [ "/etc/x-ui" ]
 CMD [ "./x-ui" ]
 ENTRYPOINT [ "/app/DockerEntrypoint.sh" ]

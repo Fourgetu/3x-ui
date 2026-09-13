@@ -579,6 +579,8 @@ export const EXAMPLES: Record<string, unknown> = {
     "remark": "VLESS-443",
     "shareAddr": "",
     "shareAddrStrategy": "",
+    "speedLimitSupported": false,
+    "speedLimitUnsupportedReason": "",
     "ssMethod": "",
     "tag": "in-443-tcp",
     "tlsFlowCapable": true,

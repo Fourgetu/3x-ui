@@ -26,6 +26,7 @@ case $1 in
         ;;
 esac
 MTG_MULTI_VER=$(curl -sfL "https://api.github.com/repos/mhsanaei/mtg-multi/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
+GOST_VER="3.3.0"
 if [ -z "$MTG_MULTI_VER" ]; then
     echo "DockerInit: could not resolve the latest mtg-multi release tag" >&2
     exit 1
@@ -36,6 +37,20 @@ curl -sfLRO "https://github.com/XTLS/Xray-core/releases/download/v26.7.28/Xray-l
 unzip "Xray-linux-${ARCH}.zip"
 rm -f "Xray-linux-${ARCH}.zip" geoip.dat geosite.dat
 mv xray "xray-linux-${FNAME}"
+
+case $FNAME in
+    i386) GOSTARCH="386" ;;
+    arm32) GOSTARCH="armv7" ;;
+    armv6) GOSTARCH="armv6" ;;
+    *) GOSTARCH="$FNAME" ;;
+esac
+GOST_PKG="gost_${GOST_VER}_linux_${GOSTARCH}"
+curl -sfLRO "https://github.com/go-gost/gost/releases/download/v${GOST_VER}/${GOST_PKG}.tar.gz"
+tar -xzf "${GOST_PKG}.tar.gz"
+mv gost "gost-linux-${FNAME}"
+rm -f "${GOST_PKG}.tar.gz"
+chmod +x "gost-linux-${FNAME}"
+
 # mtg-multi (MTProto sidecar) ships prebuilt release binaries for every target
 # we package, so download and unpack the matching one instead of compiling.
 case $FNAME in

@@ -48,6 +48,7 @@ func migrationModels() []any {
 		&model.InboundClientIps{},
 		&model.ClientRecord{},
 		&model.ClientInbound{},
+		&model.ClientSpeedLimit{},
 		&model.ClientHwid{},
 		&model.ClientExternalLink{},
 		&model.ClientGroup{},

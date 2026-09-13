@@ -16,6 +16,7 @@ import {
   Result,
   Row,
   Select,
+  Space,
   Spin,
   Statistic,
   Switch,
@@ -61,6 +62,7 @@ import { useNodesQuery } from '@/api/queries/useNodesQuery';
 import { useDatepicker } from '@/hooks/useDatepicker';
 import type {
   ClientRecord,
+  ClientSpeedLimit,
   InboundOption,
   ExternalLink,
   ExternalLinkInput,
@@ -311,6 +313,7 @@ export default function ClientsPage() {
     settingsReady,
     create,
     update,
+    updateSpeedLimit,
     remove,
     bulkDelete,
     bulkAdjust,
@@ -352,6 +355,7 @@ export default function ClientsPage() {
   const [editingClient, setEditingClient] = useState<ClientRecord | null>(null);
   const [editingAttachedIds, setEditingAttachedIds] = useState<number[]>([]);
   const [editingExternalLinks, setEditingExternalLinks] = useState<ExternalLink[]>([]);
+  const [editingSpeedLimits, setEditingSpeedLimits] = useState<ClientSpeedLimit[]>([]);
   const [editingTunnelAllowedIPs, setEditingTunnelAllowedIPs] = useState<Record<number, string>>(
     {},
   );
@@ -635,6 +639,7 @@ export default function ClientsPage() {
     setEditingClient(null);
     setEditingAttachedIds([]);
     setEditingExternalLinks([]);
+    setEditingSpeedLimits([]);
     setEditingTunnelAllowedIPs({});
     setFormOpen(true);
   }
@@ -652,6 +657,7 @@ export default function ClientsPage() {
       const ids = full?.inboundIds ?? (Array.isArray(row.inboundIds) ? row.inboundIds : []);
       setEditingAttachedIds([...ids]);
       setEditingExternalLinks(Array.isArray(full?.externalLinks) ? [...full.externalLinks] : []);
+      setEditingSpeedLimits(Array.isArray(full?.speedLimits) ? [...full.speedLimits] : []);
       setEditingTunnelAllowedIPs(full?.tunnelAllowedIPs ?? {});
       setFormOpen(true);
     },
@@ -951,13 +957,19 @@ export default function ClientsPage() {
     async (
       payload: Record<string, unknown> | { client: Record<string, unknown>; inboundIds: number[] },
       meta:
-        | { isEdit: false; email: string; externalLinks: ExternalLinkInput[] }
+        | {
+            isEdit: false;
+            email: string;
+            externalLinks: ExternalLinkInput[];
+            speedLimits: ClientSpeedLimit[];
+          }
         | {
             isEdit: true;
             email: string;
             attach: number[];
             detach: number[];
             externalLinks: ExternalLinkInput[];
+            speedLimits: ClientSpeedLimit[];
           },
     ) => {
       if (!meta.isEdit) {
@@ -966,6 +978,16 @@ export default function ClientsPage() {
         if (meta.email && meta.externalLinks.length > 0) {
           const r = await setExternalLinks(meta.email, meta.externalLinks);
           if (!r?.success) return r;
+        }
+        for (const limit of meta.speedLimits) {
+          const r = await updateSpeedLimit(meta.email, limit);
+          if (!r?.success) {
+            messageApi.error(t('pages.clients.speedLimitFailed'));
+            return r;
+          }
+        }
+        if (meta.speedLimits.length > 0) {
+          messageApi.success(t('pages.clients.speedLimitApplied'));
         }
         return createMsg;
       }
@@ -978,6 +1000,16 @@ export default function ClientsPage() {
         const r = await attach(emailKey, meta.attach);
         if (!r?.success) return r;
       }
+      for (const limit of meta.speedLimits) {
+        const r = await updateSpeedLimit(emailKey, limit);
+        if (!r?.success) {
+          messageApi.error(t('pages.clients.speedLimitFailed'));
+          return r;
+        }
+      }
+      if (meta.speedLimits.length > 0) {
+        messageApi.success(t('pages.clients.speedLimitApplied'));
+      }
       if (Array.isArray(meta.detach) && meta.detach.length > 0) {
         const r = await detach(emailKey, meta.detach);
         if (!r?.success) return r;
@@ -987,7 +1019,7 @@ export default function ClientsPage() {
       if (!r?.success) return r;
       return updateMsg;
     },
-    [create, update, attach, detach, setExternalLinks],
+    [create, update, updateSpeedLimit, attach, detach, setExternalLinks, messageApi, t],
   );
 
   const pageClass = useMemo(() => {
@@ -1164,6 +1196,46 @@ export default function ClientsPage() {
             );
           }
           return <ClientSpeedTag speed={speed} tableCell />;
+        },
+      },
+      {
+        title: t('pages.clients.downloadLimit'),
+        key: 'downloadLimit',
+        width: 135,
+        render: (_v, record) => {
+          const limits = (record.speedLimits || []).filter((limit) => limit.enabled);
+          if (limits.length === 0) return <Tag>{t('subscription.unlimited')}</Tag>;
+          return (
+            <Space size={[2, 2]} wrap>
+              {limits.map((limit) => (
+                <Tag key={limit.inboundId} title={`Inbound #${limit.inboundId}`}>
+                  {limit.downloadMbps === 0
+                    ? t('subscription.unlimited')
+                    : `${limit.downloadMbps} Mbps`}
+                </Tag>
+              ))}
+            </Space>
+          );
+        },
+      },
+      {
+        title: t('pages.clients.uploadLimit'),
+        key: 'uploadLimit',
+        width: 135,
+        render: (_v, record) => {
+          const limits = (record.speedLimits || []).filter((limit) => limit.enabled);
+          if (limits.length === 0) return <Tag>{t('subscription.unlimited')}</Tag>;
+          return (
+            <Space size={[2, 2]} wrap>
+              {limits.map((limit) => (
+                <Tag key={limit.inboundId} title={`Inbound #${limit.inboundId}`}>
+                  {limit.uploadMbps === 0
+                    ? t('subscription.unlimited')
+                    : `${limit.uploadMbps} Mbps`}
+                </Tag>
+              ))}
+            </Space>
+          );
         },
       },
       {
@@ -1906,6 +1978,7 @@ export default function ClientsPage() {
             client={editingClient}
             attachedIds={editingAttachedIds}
             attachedExternalLinks={editingExternalLinks}
+            attachedSpeedLimits={editingSpeedLimits}
             tunnelAllowedIPs={editingTunnelAllowedIPs}
             inbounds={inbounds}
             tgBotEnable={tgBotEnable}

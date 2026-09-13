@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/mhsanaei/3x-ui/v3/internal/config"
 	"github.com/mhsanaei/3x-ui/v3/internal/database/model"
 	"github.com/mhsanaei/3x-ui/v3/internal/logger"
+	"github.com/mhsanaei/3x-ui/v3/internal/userspeed"
 	"github.com/mhsanaei/3x-ui/v3/internal/util/json_util"
 	"github.com/mhsanaei/3x-ui/v3/internal/xray"
 
@@ -67,6 +69,11 @@ type XrayService struct {
 	settingService SettingService
 	nodeService    NodeService
 	xrayAPI        xray.XrayAPI
+}
+
+type routedSpeedClient struct {
+	entry map[string]any
+	route model.ClientSpeedLimit
 }
 
 // IsXrayRunning checks if the Xray process is currently running.
@@ -140,6 +147,56 @@ func RemoveIndex(s []any, index int) []any {
 	return append(s[:index], s[index+1:]...)
 }
 
+func extendInboundTagRules(raw json_util.RawMessage, aliases map[string][]string) json_util.RawMessage {
+	if len(raw) == 0 || len(aliases) == 0 {
+		return raw
+	}
+	var routing map[string]any
+	if err := json.Unmarshal(raw, &routing); err != nil {
+		return raw
+	}
+	rules, ok := routing["rules"].([]any)
+	if !ok {
+		return raw
+	}
+	changed := false
+	for _, value := range rules {
+		rule, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		tags, ok := rule["inboundTag"].([]any)
+		if !ok {
+			continue
+		}
+		seen := make(map[string]struct{}, len(tags))
+		for _, tagValue := range tags {
+			if tag, ok := tagValue.(string); ok {
+				seen[tag] = struct{}{}
+			}
+		}
+		for source := range seen {
+			for _, alias := range aliases[source] {
+				if _, exists := seen[alias]; exists {
+					continue
+				}
+				tags = append(tags, alias)
+				seen[alias] = struct{}{}
+				changed = true
+			}
+		}
+		rule["inboundTag"] = tags
+	}
+	if !changed {
+		return raw
+	}
+	encoded, err := json.Marshal(routing)
+	if err != nil {
+		return raw
+	}
+	return json_util.RawMessage(encoded)
+}
+
 // GetXrayConfig retrieves and builds the Xray configuration from settings and inbounds.
 func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 	templateConfig, err := s.settingService.GetXrayConfigTemplate()
@@ -167,6 +224,11 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	speedLimits, err := activeUserSpeedLimits()
+	if err != nil {
+		return nil, err
+	}
+	routingAliases := make(map[string][]string)
 	for _, inbound := range inbounds {
 		if !inbound.Enable {
 			continue
@@ -192,6 +254,7 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 		}
 
 		finalClients := make([]any, 0, len(dbClients))
+		routedClients := make(map[int]routedSpeedClient)
 		var wgPeers []any
 		for i := range dbClients {
 			c := dbClients[i]
@@ -245,6 +308,10 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 				}
 			case model.WireGuard:
 				wgPeers = append(wgPeers, model.WireguardPeerFromClient(c))
+				continue
+			}
+			if route, routed := speedLimits[inbound.Id][strings.ToLower(c.Email)]; routed {
+				routedClients[route.ClientID] = routedSpeedClient{entry: entry, route: route}
 				continue
 			}
 			finalClients = append(finalClients, entry)
@@ -346,7 +413,37 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 
 		inboundConfig := inbound.GenXrayInboundConfig()
 		xrayConfig.InboundConfigs = append(xrayConfig.InboundConfigs, *inboundConfig)
+		routedIDs := make([]int, 0, len(routedClients))
+		for clientID := range routedClients {
+			routedIDs = append(routedIDs, clientID)
+		}
+		sort.Ints(routedIDs)
+		for _, clientID := range routedIDs {
+			routed := routedClients[clientID]
+			entry := routed.entry
+			route := routed.route
+			if route.InternalPort == nil {
+				continue
+			}
+			clone := *inbound
+			clone.Listen = "127.0.0.1"
+			clone.Port = *route.InternalPort
+			clone.Tag = userspeed.XrayTag(inbound.Id, clientID)
+			var cloneSettings map[string]any
+			if err := json.Unmarshal([]byte(inbound.Settings), &cloneSettings); err != nil {
+				return nil, err
+			}
+			cloneSettings["clients"] = []any{entry}
+			encoded, err := json.MarshalIndent(cloneSettings, "", "  ")
+			if err != nil {
+				return nil, err
+			}
+			clone.Settings = string(encoded)
+			xrayConfig.InboundConfigs = append(xrayConfig.InboundConfigs, *clone.GenXrayInboundConfig())
+			routingAliases[inbound.Tag] = append(routingAliases[inbound.Tag], clone.Tag)
+		}
 	}
+	xrayConfig.RouterConfig = extendInboundTagRules(xrayConfig.RouterConfig, routingAliases)
 
 	// Merge subscription-derived outbounds (if any) into the final outbounds array.
 	// These are additive: each subscription is placed before or after the template

@@ -39,6 +39,12 @@ services:
       # XUI_PPROF: "true"           # expose pprof on 127.0.0.1:6060 for profiling
       # XUI_INIT_WEB_BASE_PATH: "/"
       # XUI_PORT: "8080"
+      # Per-client identity-bound speed routes allocate stable ports in these ranges.
+      # Keep the external range in sync with the published ports below.
+      # XUI_USER_SPEED_EXTERNAL_PORT_START: "32000"
+      # XUI_USER_SPEED_EXTERNAL_PORT_END: "32999"
+      # XUI_USER_SPEED_INTERNAL_PORT_START: "42000"
+      # XUI_USER_SPEED_INTERNAL_PORT_END: "42999"
       # To use PostgreSQL instead of the default SQLite, run:
       #   docker compose --profile postgres up -d
       # and uncomment the two lines below.
@@ -48,6 +54,8 @@ services:
     ports:
       # When XUI_PORT is set, publish the same container port (for example "8080:8080").
       - "2053:2053"
+      - "32000-32999:32000-32999/tcp"
+      - "32000-32999:32000-32999/udp"
     restart: unless-stopped
 
   postgres:

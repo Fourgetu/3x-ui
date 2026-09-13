@@ -212,6 +212,11 @@ func (s *ClientService) BulkDetach(inboundSvc *InboundService, emails []string, 
 		}
 		result.Detached = append(result.Detached, emailRepr[key])
 	}
+	if len(result.Detached) > 0 {
+		if err := (&UserSpeedLimitService{}).ReconcileAfterMutation(); err != nil {
+			return result, needRestart, fmt.Errorf("user speed-limit runtime reconcile after bulk client detach: %w", err)
+		}
+	}
 
 	return result, needRestart, nil
 }
@@ -834,6 +839,9 @@ func (s *ClientService) BulkDelete(inboundSvc *InboundService, emails []string, 
 				return e
 			}
 			for _, batch := range chunkInts(successIds, sqlInChunk) {
+				if e := tx.Where("client_id IN ?", batch).Delete(&model.ClientSpeedLimit{}).Error; e != nil {
+					return e
+				}
 				if e := tx.Where("client_id IN ?", batch).Delete(&model.ClientInbound{}).Error; e != nil {
 					return e
 				}
@@ -866,6 +874,11 @@ func (s *ClientService) BulkDelete(inboundSvc *InboundService, emails []string, 
 	result.Deleted = len(successEmails)
 	for email, reason := range skippedReasons {
 		result.Skipped = append(result.Skipped, BulkDeleteReport{Email: email, Reason: reason})
+	}
+	if result.Deleted > 0 {
+		if err := (&UserSpeedLimitService{}).ReconcileAfterMutation(); err != nil {
+			return result, needRestart, fmt.Errorf("user speed-limit runtime reconcile after bulk client delete: %w", err)
+		}
 	}
 	return result, needRestart, nil
 }
