@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -242,6 +243,9 @@ func (s *ClientService) DeleteOrphans() (int, error) {
 		return nil
 	}); err != nil {
 		return 0, err
+	}
+	if err := (&UserSpeedLimitService{}).ReconcileAfterMutation(); err != nil {
+		return 0, fmt.Errorf("user speed-limit runtime reconcile after orphan cleanup: %w", err)
 	}
 	return len(ids), nil
 }

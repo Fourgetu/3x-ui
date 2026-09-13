@@ -36,11 +36,17 @@ type DesiredRoute struct {
 }
 
 type Status struct {
-	Installed bool   `json:"installed"`
-	Running   bool   `json:"running"`
-	Version   string `json:"version,omitempty"`
-	Services  int    `json:"services"`
-	LastError string `json:"lastError,omitempty"`
+	Installed     bool      `json:"installed"`
+	Running       bool      `json:"running"`
+	Version       string    `json:"version,omitempty"`
+	Services      int       `json:"services"`
+	LastError     string    `json:"lastError,omitempty"`
+	PID           int       `json:"pid,omitempty"`
+	RestartCount  int       `json:"restartCount"`
+	RuntimeState  string    `json:"runtimeState"`
+	DesiredRoutes int       `json:"desiredRoutes"`
+	LastStartAt   time.Time `json:"lastStartAt,omitempty"`
+	LastExitAt    time.Time `json:"lastExitAt,omitempty"`
 }
 
 type gostConfig struct {
@@ -93,12 +99,21 @@ type gostSelector struct {
 }
 
 type Manager struct {
-	mu         sync.Mutex
-	cmd        *exec.Cmd
-	running    bool
-	services   int
-	lastConfig []byte
-	lastError  string
+	mu                sync.Mutex
+	cmd               *exec.Cmd
+	running           bool
+	services          int
+	lastConfig        []byte
+	lastError         string
+	desiredRoutes     int
+	pid               int
+	restartCount      int
+	stopping          bool
+	restartScheduled  bool
+	expectedExit      bool
+	lastStartAt       time.Time
+	lastExitAt        time.Time
+	restartGeneration uint64
 }
 
 var manager = &Manager{}
@@ -149,6 +164,9 @@ func (m *Manager) Reconcile(routes []DesiredRoute) error {
 	defer m.mu.Unlock()
 
 	sort.Slice(routes, func(i, j int) bool { return routes[i].ID < routes[j].ID })
+	m.desiredRoutes = len(routes)
+	m.restartGeneration++
+	m.stopping = false
 	cfg := buildConfig(routes)
 	configText, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -156,6 +174,7 @@ func (m *Manager) Reconcile(routes []DesiredRoute) error {
 	}
 	configText = append(configText, '\n')
 	if len(routes) == 0 {
+		m.stopping = true
 		if err := m.stopLocked(); err != nil {
 			return err
 		}
@@ -185,6 +204,7 @@ func (m *Manager) Reconcile(routes []DesiredRoute) error {
 	m.lastConfig = append(m.lastConfig[:0], configText...)
 	m.services = len(cfg.Services)
 	m.lastError = ""
+	m.stopping = false
 	return nil
 }
 
@@ -369,13 +389,20 @@ func replaceFile(from, to string) error {
 }
 
 func (m *Manager) reloadOrStartLocked() error {
+	m.expectedExit = false
 	if m.running && m.cmd != nil && m.cmd.Process != nil {
+		m.expectedExit = true
 		if err := m.cmd.Process.Signal(syscall.SIGHUP); err == nil {
 			time.Sleep(750 * time.Millisecond)
-			if m.running {
+			if m.running && m.cmd != nil && m.cmd.Process != nil && m.cmd.Process.Signal(syscall.Signal(0)) == nil {
+				m.expectedExit = false
 				return nil
 			}
+			m.running = false
+			m.cmd = nil
+			m.pid = 0
 		}
+		m.expectedExit = false
 	}
 	cmd := exec.Command(BinaryPath(), "-C", ConfigPath(), "-R", "5s")
 	cmd.Stdout = &gostLogWriter{}
@@ -385,13 +412,24 @@ func (m *Manager) reloadOrStartLocked() error {
 	}
 	m.cmd = cmd
 	m.running = true
+	m.pid = cmd.Process.Pid
+	m.restartScheduled = false
+	m.lastStartAt = time.Now()
 	go func(active *exec.Cmd) {
 		err := active.Wait()
 		m.mu.Lock()
 		if m.cmd == active {
 			m.running = false
+			m.pid = 0
+			m.lastExitAt = time.Now()
 			if err != nil {
 				m.lastError = err.Error()
+			}
+			planned := m.expectedExit
+			m.expectedExit = false
+			if !planned && !m.stopping && m.desiredRoutes > 0 {
+				logger.Warningf("GOST unexpected exit (pid=%d): %v", active.Process.Pid, err)
+				m.scheduleRestartLocked()
 			}
 		}
 		m.mu.Unlock()
@@ -410,14 +448,50 @@ func (m *Manager) StopAll() error {
 }
 
 func (m *Manager) stopLocked() error {
+	m.stopping = true
+	m.expectedExit = true
 	if !m.running || m.cmd == nil || m.cmd.Process == nil {
 		m.running = false
+		m.expectedExit = false
 		return nil
 	}
 	err := m.cmd.Process.Signal(syscall.SIGTERM)
 	m.running = false
 	m.cmd = nil
+	m.pid = 0
 	return err
+}
+
+func (m *Manager) scheduleRestartLocked() {
+	if m.restartScheduled || m.stopping || m.desiredRoutes == 0 {
+		return
+	}
+	m.restartScheduled = true
+	generation := m.restartGeneration
+	delays := []time.Duration{time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second}
+	i := m.restartCount
+	if i >= len(delays) {
+		i = len(delays) - 1
+	}
+	delay := delays[i]
+	go func() {
+		time.Sleep(delay)
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		m.restartScheduled = false
+		if generation != m.restartGeneration || m.stopping || m.desiredRoutes == 0 {
+			return
+		}
+		m.restartCount++
+		logger.Infof("GOST restart attempt %d after %s", m.restartCount, delay)
+		if err := m.reloadOrStartLocked(); err != nil {
+			m.lastError = err.Error()
+			logger.Warning("GOST restart failed:", err)
+			m.scheduleRestartLocked()
+		} else {
+			logger.Infof("GOST restart succeeded: pid=%d", m.pid)
+		}
+	}()
 }
 
 func (m *Manager) Status() Status {
@@ -431,7 +505,18 @@ func (m *Manager) Status() Status {
 			version = strings.TrimSpace(strings.Split(string(out), "\n")[0])
 		}
 	}
-	return Status{Installed: installed, Running: m.running, Version: version, Services: m.services, LastError: m.lastError}
+	state := "stopped"
+	if m.running {
+		state = "running"
+		if !m.lastStartAt.IsZero() && time.Since(m.lastStartAt) >= 30*time.Second {
+			m.restartCount = 0
+		}
+	} else if m.restartScheduled {
+		state = "degraded"
+	} else if m.lastError != "" {
+		state = "error"
+	}
+	return Status{Installed: installed, Running: m.running, Version: version, Services: m.services, LastError: m.lastError, PID: m.pid, RestartCount: m.restartCount, RuntimeState: state, DesiredRoutes: m.desiredRoutes, LastStartAt: m.lastStartAt, LastExitAt: m.lastExitAt}
 }
 
 func verifyListeners(routes []DesiredRoute) error {

@@ -732,6 +732,9 @@ func (s *ClientService) Delete(inboundSvc *InboundService, id int, keepTraffic b
 		withdrawClientTombstones(existing.Email)
 		return needRestart, err
 	}
+	if err := (&UserSpeedLimitService{}).ReconcileAfterMutation(); err != nil {
+		return needRestart, fmt.Errorf("user speed-limit runtime reconcile after client delete: %w", err)
+	}
 	return needRestart, nil
 }
 
@@ -954,6 +957,9 @@ func (s *ClientService) DeleteByEmail(inboundSvc *InboundService, email string, 
 			return needRestart, err
 		}
 	}
+	if err := (&UserSpeedLimitService{}).ReconcileAfterMutation(); err != nil {
+		return needRestart, fmt.Errorf("user speed-limit runtime reconcile after client delete by email: %w", err)
+	}
 	return needRestart, nil
 }
 
@@ -1004,6 +1010,9 @@ func (s *ClientService) Detach(inboundSvc *InboundService, id int, inboundIds []
 		if nr {
 			needRestart = true
 		}
+	}
+	if err := (&UserSpeedLimitService{}).ReconcileAfterMutation(); err != nil {
+		return needRestart, fmt.Errorf("user speed-limit runtime reconcile after client detach: %w", err)
 	}
 	return needRestart, nil
 }

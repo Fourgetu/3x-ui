@@ -204,6 +204,17 @@ func (s *UserSpeedLimitService) Apply(xrayService *XrayService) error {
 	return userspeed.GetManager().Reconcile(routes)
 }
 
+// ReconcileAfterMutation reapplies the persisted speed-limit desired state
+// after a client/inbound mutation. A stopped Xray process has no live
+// loopback handlers to remove; in that case only GOST is reconciled.
+func (s *UserSpeedLimitService) ReconcileAfterMutation() error {
+	var xrayService *XrayService
+	if process := currentXrayProcess(); process != nil && process.IsRunning() {
+		xrayService = &XrayService{}
+	}
+	return s.Apply(xrayService)
+}
+
 func desiredUserSpeedRoutes() ([]userspeed.DesiredRoute, error) {
 	var rows []userSpeedLimitRow
 	err := database.GetDB().Table("client_speed_limits AS sl").
