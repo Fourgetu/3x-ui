@@ -27,18 +27,24 @@ const depletedClientsClause = "reset = 0 and reset_day = 0 and ((total > 0 and u
 
 func (s *InboundService) AddTraffic(inboundTraffics []*xray.Traffic, clientTraffics []*xray.ClientTraffic) (needRestart bool, clientsDisabled bool, err error) {
 	var disabledNodeIDs []int
+	var remotePlans []trafficInboundUpdatePlan
 	err = submitTrafficWrite(func() error {
 		var inner error
-		needRestart, clientsDisabled, disabledNodeIDs, inner = s.addTrafficLocked(inboundTraffics, clientTraffics)
+		needRestart, clientsDisabled, disabledNodeIDs, remotePlans, inner = s.addTrafficLocked(inboundTraffics, clientTraffics)
 		return inner
 	})
-	if err == nil && len(disabledNodeIDs) > 0 {
+	if err != nil {
+		return
+	}
+	// Off the serial writer: a hanging node must not stall traffic accounting.
+	needRestart = s.applyTrafficRemotePlans(remotePlans) || needRestart
+	if len(disabledNodeIDs) > 0 {
 		s.restartRemoteNodesOnDisable(disabledNodeIDs)
 	}
 	return
 }
 
-func (s *InboundService) addTrafficLocked(inboundTraffics []*xray.Traffic, clientTraffics []*xray.ClientTraffic) (bool, bool, []int, error) {
+func (s *InboundService) addTrafficLocked(inboundTraffics []*xray.Traffic, clientTraffics []*xray.ClientTraffic) (bool, bool, []int, []trafficInboundUpdatePlan, error) {
 	db := database.GetDB()
 	// Commit durable traffic before best-effort lifecycle maintenance so helper
 	// failures cannot discard usage already reported by Xray.
@@ -48,7 +54,7 @@ func (s *InboundService) addTrafficLocked(inboundTraffics []*xray.Traffic, clien
 		}
 		return s.addClientTraffic(tx, clientTraffics)
 	}); err != nil {
-		return false, false, nil, err
+		return false, false, nil, nil, err
 	}
 
 	var (
@@ -93,10 +99,10 @@ func (s *InboundService) addTrafficLocked(inboundTraffics []*xray.Traffic, clien
 	})
 	if err != nil {
 		logger.Warning("traffic lifecycle maintenance failed after traffic commit:", err)
-		return false, false, nil, nil
+		return false, false, nil, nil, nil
 	}
 	needRestart = needRestart || s.applyTrafficMutationBatch(batch)
-	return needRestart, clientsDisabled, disabledNodeIDs, nil
+	return needRestart, clientsDisabled, disabledNodeIDs, batch.remotePlans, nil
 }
 
 func (s *InboundService) addInboundTraffic(tx *gorm.DB, traffics []*xray.Traffic) error {
@@ -368,10 +374,15 @@ func (s *InboundService) autoRenewClients(tx *gorm.DB, mutationBatch *trafficMut
 	var inbound_ids []int
 	var inbounds []*model.Inbound
 	needRestart := false
+	type inboundClientKey struct {
+		inboundID int
+		email     string
+	}
 	var clientsToAdd []struct {
 		inbound model.Inbound
 		client  map[string]any
 	}
+	clientsToAddSet := make(map[inboundClientKey]struct{})
 
 	// Resolve the inbounds to renew through the client_inbounds link rather than
 	// client_traffics.inbound_id, which goes stale after an inbound is deleted and
@@ -407,8 +418,13 @@ func (s *InboundService) autoRenewClients(tx *gorm.DB, mutationBatch *trafficMut
 	// instead of a linear scan of every expired row (O(clients × expired) per
 	// inbound, quadratic at scale). Pointers keep the in-place mutation below.
 	trafficByEmail := make(map[string]*xray.ClientTraffic, len(traffics))
+	// Keep the pre-renewal quota state: the shared pointer becomes enabled while
+	// processing the first inbound, while an already-enabled row paired with
+	// disabled settings represents an operator-disabled client we must preserve.
+	trafficWasEnabled := make(map[string]bool, len(traffics))
 	for i := range traffics {
 		trafficByEmail[traffics[i].Email] = traffics[i]
+		trafficWasEnabled[traffics[i].Email] = traffics[i].Enable
 	}
 	renewedEmails := make([]string, 0, len(traffics))
 	for inbound_index := range inbounds {
@@ -438,6 +454,15 @@ func (s *InboundService) autoRenewClients(tx *gorm.DB, mutationBatch *trafficMut
 				continue
 			}
 			at := time.UnixMilli(newExpiryTime)
+			// Inclusive end-of-day expiries share the next billing midnight; snap without
+			// spending an allowance so the first charged step is a full month (#6300).
+			if traffic.ResetDay > 0 {
+				boundary := nextCalendarRenewal(at, traffic.ResetDay, renewLocation)
+				if !at.Before(boundary.Add(-time.Second)) && at.Before(boundary) {
+					at = boundary
+					newExpiryTime = at.UnixMilli()
+				}
+			}
 			renewals := 0
 			for newExpiryTime < now {
 				if traffic.ResetMax > 0 && traffic.ResetCount+renewals >= traffic.ResetMax {
@@ -453,32 +478,37 @@ func (s *InboundService) autoRenewClients(tx *gorm.DB, mutationBatch *trafficMut
 				}
 				renewals++
 			}
-			if renewals == 0 {
-				continue
+			if renewals > 0 {
+				traffic.ExpiryTime = newExpiryTime
+				traffic.ResetCount += renewals
 			}
-			c["expiryTime"] = newExpiryTime
-			traffic.ExpiryTime = newExpiryTime
-			traffic.ResetCount += renewals
-			if newExpiryTime <= now {
+			c["expiryTime"] = traffic.ExpiryTime
+			if traffic.ExpiryTime <= now {
 				// Cap ran out mid-catch-up and the client is still expired: enabling it
 				// for disableInvalidClients to undo adds and removes an xray user for nothing.
 				clients[client_index] = any(c)
 				continue
 			}
-			traffic.Down = 0
-			traffic.Up = 0
-			renewedEmails = append(renewedEmails, email)
-			if !traffic.Enable {
+			if renewals > 0 {
+				traffic.Down = 0
+				traffic.Up = 0
+				renewedEmails = append(renewedEmails, email)
+			}
+			if !trafficWasEnabled[email] {
 				traffic.Enable = true
 				c["enable"] = true
-				clientsToAdd = append(clientsToAdd,
-					struct {
-						inbound model.Inbound
-						client  map[string]any
-					}{
-						inbound: *inbounds[inbound_index],
-						client:  apiUserFromClient(c, cipher),
-					})
+				key := inboundClientKey{inboundID: inbounds[inbound_index].Id, email: email}
+				if _, planned := clientsToAddSet[key]; !planned {
+					clientsToAddSet[key] = struct{}{}
+					clientsToAdd = append(clientsToAdd,
+						struct {
+							inbound model.Inbound
+							client  map[string]any
+						}{
+							inbound: *inbounds[inbound_index],
+							client:  apiUserFromClient(c, cipher),
+						})
+				}
 			}
 			clients[client_index] = any(c)
 		}
@@ -649,12 +679,17 @@ func (s *InboundService) ResetClientTraffic(id int, clientEmail string) (needRes
 	if err == nil {
 		s.resetMtprotoClientQuota(clientEmail)
 		if resetInbound != nil && resetInbound.NodeID != nil {
-			if rt, rterr := s.runtimeFor(resetInbound); rterr == nil {
-				if e := rt.ResetClientTraffic(context.Background(), resetInbound, clientEmail); e != nil {
+			// Attempted whatever the node's status: nothing replays a reset, so a
+			// node still serving after being marked offline must get it now.
+			if rt, rterr := s.runtimeFor(resetInbound); rterr != nil {
+				logger.Warning("ResetClientTraffic: runtime lookup failed:", rterr)
+			} else {
+				ctx, cancel := nodePushContext()
+				e := rt.ResetClientTraffic(ctx, resetInbound, clientEmail)
+				cancel()
+				if e != nil {
 					logger.Warning("ResetClientTraffic: remote propagation to", rt.Name(), "failed:", e)
 				}
-			} else {
-				logger.Warning("ResetClientTraffic: runtime lookup failed:", rterr)
 			}
 		}
 	}
@@ -699,6 +734,7 @@ func (s *InboundService) resetClientTrafficLocked(id int, clientEmail string) (b
 					"flow":     client.Flow,
 					"password": client.Password,
 					"cipher":   cipher,
+					"reverse":  client.Reverse,
 				}
 				if inbound.NodeID != nil {
 					reenableNodeID = inbound.NodeID
@@ -797,13 +833,18 @@ func (s *InboundService) propagateResetAllTrafficsToNodes() {
 	if err != nil {
 		return
 	}
-	for _, node := range nodes {
-		if rt, err := runtime.GetManager().RuntimeFor(&node.Id); err == nil {
+	ids := make([]int, len(nodes))
+	for i, node := range nodes {
+		ids[i] = node.Id
+	}
+	fanoutInboundResults(ids, nodeFanoutConcurrency, func(i int) struct{} {
+		if rt, err := runtime.GetManager().RuntimeFor(&ids[i]); err == nil {
 			if e := rt.ResetAllTraffics(context.Background()); e != nil {
 				logger.Warning("ResetAllTraffics: remote propagation to", rt.Name(), "failed:", e)
 			}
 		}
-	}
+		return struct{}{}
+	})
 }
 
 func (s *InboundService) ResetInboundTraffic(id int) error {
@@ -1133,11 +1174,11 @@ func (s *InboundService) CountClientTraffics() (int64, error) {
 }
 
 type InboundTrafficSummary struct {
-	Id     int   `json:"id"`
-	Up     int64 `json:"up"`
-	Down   int64 `json:"down"`
-	Total  int64 `json:"total"`
-	Enable bool  `json:"enable"`
+	Id     int   `json:"id" example:"1"`
+	Up     int64 `json:"up" example:"1048576"`
+	Down   int64 `json:"down" example:"2097152"`
+	Total  int64 `json:"total" example:"10737418240"`
+	Enable bool  `json:"enable" example:"true"`
 }
 
 func (s *InboundService) GetInboundsTrafficSummary() ([]InboundTrafficSummary, error) {

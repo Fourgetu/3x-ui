@@ -19,23 +19,28 @@ type Msg struct {
 }
 
 type AllSetting struct {
-	WebListen         string `json:"webListen" form:"webListen"`
-	WebDomain         string `json:"webDomain" form:"webDomain"`
-	WebPort           int    `json:"webPort" form:"webPort" validate:"gte=1,lte=65535"`
-	WebCertFile       string `json:"webCertFile" form:"webCertFile"`
-	WebKeyFile        string `json:"webKeyFile" form:"webKeyFile"`
-	WebBasePath       string `json:"webBasePath" form:"webBasePath"`
-	SessionMaxAge     int    `json:"sessionMaxAge" form:"sessionMaxAge" validate:"gte=1,lte=525600"`
-	TrustedProxyCIDRs string `json:"trustedProxyCIDRs" form:"trustedProxyCIDRs"`
-	IpLimitAllowlist  string `json:"ipLimitAllowlist" form:"ipLimitAllowlist"`
-	PanelOutbound     string `json:"panelOutbound" form:"panelOutbound"`
+	WebListen             string `json:"webListen" form:"webListen"`
+	WebDomain             string `json:"webDomain" form:"webDomain"`
+	WebPort               int    `json:"webPort" form:"webPort" validate:"gte=1,lte=65535"`
+	WebCertFile           string `json:"webCertFile" form:"webCertFile"`
+	WebKeyFile            string `json:"webKeyFile" form:"webKeyFile"`
+	WebBasePath           string `json:"webBasePath" form:"webBasePath"`
+	SessionMaxAge         int    `json:"sessionMaxAge" form:"sessionMaxAge" validate:"gte=1,lte=525600"`
+	TrustedProxyCIDRs     string `json:"trustedProxyCIDRs" form:"trustedProxyCIDRs"`
+	RealityScanCandidates string `json:"realityScanCandidates" form:"realityScanCandidates"`
+	IpLimitAllowlist      string `json:"ipLimitAllowlist" form:"ipLimitAllowlist"`
+	PanelOutbound         string `json:"panelOutbound" form:"panelOutbound"`
 
-	PageSize                  int    `json:"pageSize" form:"pageSize" validate:"gte=0,lte=1000"`
-	ExpireDiff                int    `json:"expireDiff" form:"expireDiff" validate:"gte=0"`
-	TrafficDiff               int    `json:"trafficDiff" form:"trafficDiff" validate:"gte=0,lte=100"`
-	RemarkTemplate            string `json:"remarkTemplate" form:"remarkTemplate"`
-	SubShowIdentityOnAllLinks bool   `json:"subShowIdentityOnAllLinks" form:"subShowIdentityOnAllLinks"`
-	Datepicker                string `json:"datepicker" form:"datepicker"`
+	PageSize                   int    `json:"pageSize" form:"pageSize" validate:"gte=0,lte=1000"`
+	ExpireDiff                 int    `json:"expireDiff" form:"expireDiff" validate:"gte=0"`
+	TrafficDiff                int    `json:"trafficDiff" form:"trafficDiff" validate:"gte=0,lte=100"`
+	RemarkTemplate             string `json:"remarkTemplate" form:"remarkTemplate"`
+	SubShowIdentityOnAllLinks  bool   `json:"subShowIdentityOnAllLinks" form:"subShowIdentityOnAllLinks"`
+	SubInfoNodeEnable          bool   `json:"subInfoNodeEnable" form:"subInfoNodeEnable"`
+	SubCalendarExpireInclusive bool   `json:"subCalendarExpireInclusive" form:"subCalendarExpireInclusive"`
+	SubExpiredTemplate         string `json:"subExpiredTemplate" form:"subExpiredTemplate"`
+	SubTrafficDepletedTemplate string `json:"subTrafficDepletedTemplate" form:"subTrafficDepletedTemplate"`
+	Datepicker                 string `json:"datepicker" form:"datepicker"`
 
 	TgBotEnable     bool   `json:"tgBotEnable" form:"tgBotEnable"`
 	TgBotToken      string `json:"tgBotToken" form:"tgBotToken"`
@@ -62,12 +67,24 @@ type AllSetting struct {
 	SmtpCpu            int    `json:"smtpCpu" form:"smtpCpu" validate:"gte=0,lte=100"`
 	SmtpMemory         int    `json:"smtpMemory" form:"smtpMemory" validate:"gte=0,lte=100"`
 
+	DiscordBotEnable     bool   `json:"discordBotEnable" form:"discordBotEnable"`
+	DiscordBotToken      string `json:"discordBotToken" form:"discordBotToken"`
+	DiscordChannelId     string `json:"discordChannelId" form:"discordChannelId"`
+	DiscordAdminIds      string `json:"discordAdminIds" form:"discordAdminIds"`
+	DiscordRunTime       string `json:"discordRunTime" form:"discordRunTime"`
+	DiscordBotBackup     bool   `json:"discordBotBackup" form:"discordBotBackup"`
+	DiscordCpu           int    `json:"discordCpu" form:"discordCpu" validate:"gte=0,lte=100"`
+	DiscordMemory        int    `json:"discordMemory" form:"discordMemory" validate:"gte=0,lte=100"`
+	DiscordLang          string `json:"discordLang" form:"discordLang"`
+	DiscordEnabledEvents string `json:"discordEnabledEvents" form:"discordEnabledEvents"`
+
 	OutboundDownThreshold int `json:"outboundDownThreshold" form:"outboundDownThreshold" validate:"gte=1,lte=100"`
 
 	TimeLocation    string `json:"timeLocation" form:"timeLocation"`
 	TwoFactorEnable bool   `json:"twoFactorEnable" form:"twoFactorEnable"`
 	TwoFactorToken  string `json:"twoFactorToken" form:"twoFactorToken"`
 
+	HappLinkEnable              bool   `json:"happLinkEnable" form:"happLinkEnable"`
 	SubEnable                   bool   `json:"subEnable" form:"subEnable"`
 	SubJsonEnable               bool   `json:"subJsonEnable" form:"subJsonEnable"`
 	SubJsonAutoDetect           bool   `json:"subJsonAutoDetect" form:"subJsonAutoDetect"`
@@ -77,6 +94,7 @@ type AllSetting struct {
 	SubClashUserAgentRegex      string `json:"subClashUserAgentRegex" form:"subClashUserAgentRegex"`
 	SubTitle                    string `json:"subTitle" form:"subTitle"`
 	SubSupportUrl               string `json:"subSupportUrl" form:"subSupportUrl"`
+	SubProfileMode              string `json:"subProfileMode" form:"subProfileMode"`
 	SubProfileUrl               string `json:"subProfileUrl" form:"subProfileUrl"`
 	SubAnnounce                 string `json:"subAnnounce" form:"subAnnounce"`
 	SubEnableRouting            bool   `json:"subEnableRouting" form:"subEnableRouting"`
@@ -104,10 +122,37 @@ type AllSetting struct {
 	SubClashRules               string `json:"subClashRules" form:"subClashRules"`
 	SubJsonMux                  string `json:"subJsonMux" form:"subJsonMux"`
 	SubJsonRules                string `json:"subJsonRules" form:"subJsonRules"`
+	SubJsonRoutingRules         string `json:"subJsonRoutingRules" form:"subJsonRoutingRules"`
+	SubJsonDns                  string `json:"subJsonDns" form:"subJsonDns"`
 	SubJsonFinalMask            string `json:"subJsonFinalMask" form:"subJsonFinalMask"`
 	SubJsonObservatory          string `json:"subJsonObservatory" form:"subJsonObservatory"`
 	SubThemeDir                 string `json:"subThemeDir" form:"subThemeDir"`
 	SubHideSettings             bool   `json:"subHideSettings" form:"subHideSettings"`
+
+	// Happ client customization settings (app-management / routing / UX).
+	SubHappAutoDetect          bool   `json:"subHappAutoDetect" form:"subHappAutoDetect"`
+	SubHappProviderId          string `json:"subHappProviderId" form:"subHappProviderId"`
+	SubHappNewUrl              string `json:"subHappNewUrl" form:"subHappNewUrl"`
+	SubHappFallbackUrl         string `json:"subHappFallbackUrl" form:"subHappFallbackUrl"`
+	SubHappSubInfoColor        string `json:"subHappSubInfoColor" form:"subHappSubInfoColor"`
+	SubHappSubInfoText         string `json:"subHappSubInfoText" form:"subHappSubInfoText"`
+	SubHappSubInfoButtonText   string `json:"subHappSubInfoButtonText" form:"subHappSubInfoButtonText"`
+	SubHappSubInfoButtonLink   string `json:"subHappSubInfoButtonLink" form:"subHappSubInfoButtonLink"`
+	SubHappSubExpire           bool   `json:"subHappSubExpire" form:"subHappSubExpire"`
+	SubHappSubExpireButtonLink string `json:"subHappSubExpireButtonLink" form:"subHappSubExpireButtonLink"`
+	SubHappNotificationExpire  bool   `json:"subHappNotificationExpire" form:"subHappNotificationExpire"`
+	SubHappNoLimit             bool   `json:"subHappNoLimit" form:"subHappNoLimit"`
+	SubHappAlwaysHwid          bool   `json:"subHappAlwaysHwid" form:"subHappAlwaysHwid"`
+	SubHappTunMode             string `json:"subHappTunMode" form:"subHappTunMode"`
+	SubHappTunType             string `json:"subHappTunType" form:"subHappTunType"`
+	SubHappExcludeRoutes       string `json:"subHappExcludeRoutes" form:"subHappExcludeRoutes"`
+	SubHappExcludeApns         bool   `json:"subHappExcludeApns" form:"subHappExcludeApns"`
+	SubHappColorProfile        string `json:"subHappColorProfile" form:"subHappColorProfile"`
+	SubHappPingType            string `json:"subHappPingType" form:"subHappPingType"`
+	SubHappAutoConnect         bool   `json:"subHappAutoConnect" form:"subHappAutoConnect"`
+	SubHappAutoConnectType     string `json:"subHappAutoConnectType" form:"subHappAutoConnectType"`
+	SubHappPerAppMode          string `json:"subHappPerAppMode" form:"subHappPerAppMode"`
+	SubHappPerAppList          string `json:"subHappPerAppList" form:"subHappPerAppList"`
 
 	LdapEnable             bool   `json:"ldapEnable" form:"ldapEnable"`
 	LdapHost               string `json:"ldapHost" form:"ldapHost"`
@@ -137,13 +182,14 @@ type AllSetting struct {
 type AllSettingView struct {
 	AllSetting
 
-	HasTgBotToken     bool `json:"hasTgBotToken"`
-	HasTwoFactorToken bool `json:"hasTwoFactorToken"`
-	HasLdapPassword   bool `json:"hasLdapPassword"`
-	HasApiToken       bool `json:"hasApiToken"`
-	HasWarpSecret     bool `json:"hasWarpSecret"`
-	HasNordSecret     bool `json:"hasNordSecret"`
-	HasSmtpPassword   bool `json:"hasSmtpPassword"`
+	HasTgBotToken      bool `json:"hasTgBotToken"`
+	HasTwoFactorToken  bool `json:"hasTwoFactorToken"`
+	HasLdapPassword    bool `json:"hasLdapPassword"`
+	HasApiToken        bool `json:"hasApiToken"`
+	HasWarpSecret      bool `json:"hasWarpSecret"`
+	HasNordSecret      bool `json:"hasNordSecret"`
+	HasSmtpPassword    bool `json:"hasSmtpPassword"`
+	HasDiscordBotToken bool `json:"hasDiscordBotToken"`
 }
 
 func pathHasForbiddenChar(s string) bool {

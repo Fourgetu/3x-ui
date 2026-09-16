@@ -1,4 +1,5 @@
 import { ObjectUtil } from '@/utils';
+import type { SubProfileMode } from '@/schemas/setting';
 
 export class AllSetting {
   webListen = '';
@@ -9,6 +10,8 @@ export class AllSetting {
   webBasePath = '/';
   sessionMaxAge = 360;
   trustedProxyCIDRs = '127.0.0.1/32,::1/128';
+  realityScanCandidates =
+    'www.cloudflare.com:443,www.microsoft.com:443,www.amazon.com:443,aws.amazon.com:443,www.samsung.com:443,www.nvidia.com:443,www.amd.com:443,www.intel.com:443,www.sony.com:443,dl.google.com:443';
   ipLimitAllowlist = '';
   panelOutbound = '';
   pageSize = 25;
@@ -16,6 +19,11 @@ export class AllSetting {
   trafficDiff = 0;
   remarkTemplate = '{{INBOUND}}-{{EMAIL}}|📊{{TRAFFIC_LEFT}}|⏳{{DAYS_LEFT}}D';
   subShowIdentityOnAllLinks = false;
+  subInfoNodeEnable = false;
+  subCalendarExpireInclusive = false;
+  subExpiredTemplate = '⛔ {{EMAIL}} | Expired: {{EXPIRE_DATE}}';
+  subTrafficDepletedTemplate =
+    '🚫 {{EMAIL}} | Traffic Depleted | {{TRAFFIC_USED}}/{{TRAFFIC_TOTAL}}';
   datepicker: 'gregorian' | 'jalalian' = 'gregorian';
   tgBotEnable = false;
   tgBotToken = '';
@@ -29,6 +37,7 @@ export class AllSetting {
   twoFactorEnable = false;
   twoFactorToken = '';
   xrayTemplateConfig = '';
+  happLinkEnable = false;
   subEnable = true;
   subJsonEnable = false;
   subJsonAutoDetect = false;
@@ -38,6 +47,7 @@ export class AllSetting {
   subClashUserAgentRegex = '';
   subTitle = '';
   subSupportUrl = '';
+  subProfileMode: SubProfileMode = 'none';
   subProfileUrl = '';
   subAnnounce = '';
   subEnableRouting = false;
@@ -65,10 +75,35 @@ export class AllSetting {
   subClashRules = '';
   subJsonMux = '';
   subJsonRules = '';
+  subJsonRoutingRules = '';
+  subJsonDns = '';
   subJsonFinalMask = '';
   subJsonObservatory = '';
   subThemeDir = '';
   subHideSettings = false;
+  subHappAutoDetect = false;
+  subHappProviderId = '';
+  subHappNewUrl = '';
+  subHappFallbackUrl = '';
+  subHappSubInfoColor = 'blue';
+  subHappSubInfoText = '';
+  subHappSubInfoButtonText = '';
+  subHappSubInfoButtonLink = '';
+  subHappSubExpire = false;
+  subHappSubExpireButtonLink = '';
+  subHappNotificationExpire = false;
+  subHappNoLimit = false;
+  subHappAlwaysHwid = false;
+  subHappTunMode = '';
+  subHappTunType = '';
+  subHappExcludeRoutes = '';
+  subHappExcludeApns = false;
+  subHappColorProfile = '';
+  subHappPingType = '';
+  subHappAutoConnect = false;
+  subHappAutoConnectType = 'lowestdelay';
+  subHappPerAppMode = 'off';
+  subHappPerAppList = '';
 
   timeLocation = 'Local';
 
@@ -117,10 +152,31 @@ export class AllSetting {
   clearTgBotToken = false;
   clearLdapPassword = false;
   clearSmtpPassword = false;
+  discordBotEnable = false;
+  discordBotToken = '';
+  discordChannelId = '';
+  discordAdminIds = '';
+  discordRunTime = '@daily';
+  discordBotBackup = false;
+  discordCpu = 80;
+  discordMemory = 80;
+  discordLang = 'en-US';
+  discordEnabledEvents = 'login.attempt,cpu.high';
+  hasDiscordBotToken = false;
+  clearDiscordBotToken = false;
 
   constructor(data?: unknown) {
     if (data != null) {
       ObjectUtil.cloneProps(this, data);
+    }
+    // Legacy settings with a custom URL retain it until an explicit mode is saved.
+    if (
+      typeof data === 'object' &&
+      data !== null &&
+      (!('subProfileMode' in data) || data.subProfileMode === undefined) &&
+      this.subProfileUrl.trim() !== ''
+    ) {
+      this.subProfileMode = 'custom';
     }
     const cpu = Math.round(Number(this.tgCpu));
     this.tgCpu = Number.isFinite(cpu) ? Math.min(100, Math.max(0, cpu)) : 80;

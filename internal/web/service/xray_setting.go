@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mhsanaei/3x-ui/v3/internal/amneziawg"
+	"github.com/mhsanaei/3x-ui/v3/internal/database"
 	"github.com/mhsanaei/3x-ui/v3/internal/util/common"
 	"github.com/mhsanaei/3x-ui/v3/internal/xray"
 )
@@ -39,6 +41,9 @@ func (s *XraySettingService) SaveXraySetting(newXraySettings string) error {
 	if synced, err := EnsureDnsServerRouting(newXraySettings); err == nil {
 		newXraySettings = synced
 	}
+	if spelled, changed, err := database.RewriteDNSOutboundQTypeZero(newXraySettings); err == nil && changed {
+		newXraySettings = spelled
+	}
 	return s.saveSetting("xrayTemplateConfig", newXraySettings)
 }
 
@@ -58,6 +63,20 @@ func (s *XraySettingService) CheckXrayConfig(XrayTemplateConfig string) error {
 			coreVersion = process.GetXrayVersion()
 		}
 		for _, outbound := range outbounds {
+			// Panel pseudo-protocol: validated panel-side because the core's
+			// loader would reject it outright.
+			if amneziawg.IsAmneziaWGOutbound(outbound) {
+				var probe struct {
+					Tag string `json:"tag"`
+				}
+				if err := json.Unmarshal(outbound, &probe); err != nil {
+					return common.NewError("xray template config invalid: amneziawg outbound tag unreadable:", err)
+				}
+				if err := amneziawg.ValidateAmneziaWGOutbound(probe.Tag, outbound); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := xray.ValidateOutboundConfig(outbound); err != nil {
 				if shouldSkipLegacyUnencryptedOutboundRejection(coreVersion, err) {
 					continue

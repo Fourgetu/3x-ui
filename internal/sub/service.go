@@ -22,6 +22,7 @@ import (
 	"github.com/mhsanaei/3x-ui/v3/internal/database"
 	"github.com/mhsanaei/3x-ui/v3/internal/database/model"
 	"github.com/mhsanaei/3x-ui/v3/internal/logger"
+	"github.com/mhsanaei/3x-ui/v3/internal/tuic"
 	"github.com/mhsanaei/3x-ui/v3/internal/util/common"
 	"github.com/mhsanaei/3x-ui/v3/internal/util/random"
 	wgutil "github.com/mhsanaei/3x-ui/v3/internal/util/wireguard"
@@ -44,13 +45,18 @@ type SubService struct {
 	subscriptionBody bool
 	// usageShown emits info once per subscription identity, including twins.
 	// PrepareForRequest resets this per-request state.
-	usageShown map[string]bool
+	usageShown                 map[string]bool
 	// remarkCounts keeps duplicate node names distinct within one subscription body.
 	// PrepareForRequest resets this per-request state.
-	remarkCounts           map[string]int
-	showIdentityOnAllLinks bool
-	inboundService         service.InboundService
-	settingService         service.SettingService
+	remarkCounts               map[string]int
+	showIdentityOnAllLinks     bool
+	subInfoNodeEnable          bool
+	subCalendarExpireInclusive bool
+	calendarExpireLocation     *time.Location
+	subExpiredTemplate         string
+	subTrafficDepletedTemplate string
+	inboundService             service.InboundService
+	settingService             service.SettingService
 	// nodesByID is populated per request from the Node table so
 	// resolveInboundAddress can return the node's address for any
 	// inbound whose NodeID is set. Keeps the per-link host derivation
@@ -113,6 +119,11 @@ func (s *SubService) PrepareForRequest(host string) {
 	s.loadNodes()
 	s.loadRemarkSettings()
 	s.loadClientSpeedPorts()
+	s.subCalendarExpireInclusive, _ = s.settingService.GetSubCalendarExpireInclusive()
+	s.calendarExpireLocation = nil
+	if s.subCalendarExpireInclusive {
+		s.calendarExpireLocation, _ = s.settingService.GetTimeLocation()
+	}
 }
 
 // primeLinkClients caches clients (first occurrence per email, matching the
@@ -144,8 +155,10 @@ func (s *SubService) primeLinkClients(inboundId int, clients []model.Client, com
 }
 
 // clientForLink resolves one client of an inbound by email for link
-// generation: from the per-request cache when primed, otherwise by parsing
-// the settings JSON once and caching every client from it.
+// generation: from the per-request cache when primed, otherwise via
+// clientsForLinkExport (clients-table UUID identity with settings-JSON
+// fallback for share-link protocols; settings JSON for WireGuard/AmneziaWG
+// tunnel fields) and caches the list.
 func (s *SubService) clientForLink(inbound *model.Inbound, email string) (model.Client, bool) {
 	if m, ok := s.clientsByInbound[inbound.Id]; ok {
 		if c, hit := m[email]; hit {
@@ -155,7 +168,7 @@ func (s *SubService) clientForLink(inbound *model.Inbound, email string) (model.
 			return model.Client{}, false
 		}
 	}
-	clients, err := s.inboundService.GetClients(inbound)
+	clients, err := s.clientsForLinkExport(inbound)
 	if err != nil {
 		return model.Client{}, false
 	}
@@ -166,6 +179,29 @@ func (s *SubService) clientForLink(inbound *model.Inbound, email string) (model.
 		}
 	}
 	return model.Client{}, false
+}
+
+// clientsForLinkExport returns the clients used to build share / QR / allLinks
+// exports for one inbound. UUID-bearing protocols prefer the normalized clients
+// table so the link matches the running Xray identity when settings JSON is
+// stale (#6436). When that list is empty or unavailable (settings-only inbounds,
+// unsynced rows, unit tests without a DB), fall back to GetClients so links
+// still generate from the embedded settings JSON (#6458). WireGuard and
+// AmneziaWG always keep the inbound's own settings JSON: private key,
+// AllowedIPs, and related tunnel fields are deliberately per-inbound there,
+// while the shared clients.wg_* columns collapse to whichever tunnel inbound
+// synced last (see TunnelAllowedIPsByInbound / amneziaWGClientAddresses).
+func (s *SubService) clientsForLinkExport(inbound *model.Inbound) ([]model.Client, error) {
+	if inbound.Protocol == model.WireGuard || inbound.Protocol == model.AmneziaWG {
+		return s.inboundService.GetClients(inbound)
+	}
+	if database.GetDB() != nil {
+		clients, err := s.inboundService.ListClientsForInbound(inbound.Id)
+		if err == nil && len(clients) > 0 {
+			return clients, nil
+		}
+	}
+	return s.inboundService.GetClients(inbound)
 }
 
 // linkSettings returns the inbound's settings decoded once per request with
@@ -203,14 +239,29 @@ func (s *SubService) linkSettings(inbound *model.Inbound) map[string]any {
 // (the date formatter reads datepicker). Loading it only in getSubs left
 // JSON/Clash with the zero value.
 func (s *SubService) loadRemarkSettings() {
-	var err error
-	s.datepicker, err = s.settingService.GetDatepicker()
-	if err != nil {
+	if s.datepicker == "" {
 		s.datepicker = "gregorian"
 	}
-	s.showIdentityOnAllLinks, err = s.settingService.GetSubShowIdentityOnAllLinks()
-	if err != nil {
-		s.showIdentityOnAllLinks = false
+	if s.subExpiredTemplate == "" {
+		s.subExpiredTemplate = service.DefaultSubExpiredTemplate
+	}
+	if s.subTrafficDepletedTemplate == "" {
+		s.subTrafficDepletedTemplate = service.DefaultSubTrafficDepletedTemplate
+	}
+	if datepicker, err := s.settingService.GetDatepicker(); err == nil && datepicker != "" {
+		s.datepicker = datepicker
+	}
+	if enabled, err := s.settingService.GetSubShowIdentityOnAllLinks(); err == nil && enabled {
+		s.showIdentityOnAllLinks = enabled
+	}
+	if enabled, err := s.settingService.GetSubInfoNodeEnable(); err == nil && enabled {
+		s.subInfoNodeEnable = enabled
+	}
+	if tmpl, err := s.settingService.GetSubExpiredTemplate(); err == nil && tmpl != "" {
+		s.subExpiredTemplate = tmpl
+	}
+	if tmpl, err := s.settingService.GetSubTrafficDepletedTemplate(); err == nil && tmpl != "" {
+		s.subTrafficDepletedTemplate = tmpl
 	}
 }
 
@@ -299,6 +350,70 @@ func (s *SubService) GetSubs(subId string, host string) ([]string, []string, int
 	return s.ForRequest(host).getSubs(subId)
 }
 
+type infoNodeMode int
+
+const (
+	infoNodeNone infoNodeMode = iota
+	infoNodeActive
+	infoNodeExpired
+	infoNodeDepleted
+)
+
+func (s *SubService) resolveInfoNodeRemark(subId string, uniqueEmails []string, traffic xray.ClientTraffic, hasEntries bool) (infoNodeMode, string) {
+	if !s.subInfoNodeEnable || !s.subscriptionBody {
+		return infoNodeNone, ""
+	}
+	nowSec := time.Now().Unix()
+	isExpired := traffic.ExpiryTime > 0 && traffic.ExpiryTime/1000 <= nowSec
+	isDepleted := traffic.Total > 0 && (traffic.Up+traffic.Down) >= traffic.Total
+
+	primaryEmail := ""
+	if len(uniqueEmails) > 0 {
+		primaryEmail = uniqueEmails[0]
+	}
+	ctx := remarkContext{
+		client: model.Client{Email: primaryEmail, SubID: subId},
+		stats:  traffic,
+	}
+
+	if isExpired {
+		tmpl := s.subExpiredTemplate
+		if tmpl == "" {
+			tmpl = service.DefaultSubExpiredTemplate
+		}
+		remark := expandRemarkVars(tmpl, ctx)
+		if strings.TrimSpace(remark) == "" {
+			remark = "Expired"
+		}
+		return infoNodeExpired, remark
+	}
+
+	if isDepleted {
+		tmpl := s.subTrafficDepletedTemplate
+		if tmpl == "" {
+			tmpl = service.DefaultSubTrafficDepletedTemplate
+		}
+		remark := expandRemarkVars(tmpl, ctx)
+		if strings.TrimSpace(remark) == "" {
+			remark = "Traffic Depleted"
+		}
+		return infoNodeDepleted, remark
+	}
+
+	if hasEntries {
+		tmpl := s.remarkTemplate
+		if tmpl == "" {
+			tmpl = service.DefaultRemarkTemplate
+		}
+		remark := expandRemarkVars(tmpl, ctx)
+		if strings.TrimSpace(remark) != "" {
+			return infoNodeActive, remark
+		}
+	}
+
+	return infoNodeNone, ""
+}
+
 func (s *SubService) getSubs(subId string) ([]string, []string, int64, xray.ClientTraffic, error) {
 	var result []string
 	var emails []string
@@ -347,6 +462,13 @@ func (s *SubService) getSubs(subId string) ([]string, []string, int64, xray.Clie
 		if ext.Enable {
 			hasEnabledClient = true
 		}
+		if !ext.Active {
+			seenEmails[ext.Email] = struct{}{}
+			if result == nil {
+				result = []string{}
+			}
+			continue
+		}
 		for _, el := range expandEntry(ext) {
 			if link := applyRemarkToLink(el.Link, el.Name); link != "" {
 				result = append(result, link)
@@ -360,18 +482,30 @@ func (s *SubService) getSubs(subId string) ([]string, []string, int64, xray.Clie
 	for e := range seenEmails {
 		uniqueEmails = append(uniqueEmails, e)
 	}
+	slices.Sort(uniqueEmails)
 	traffic, lastOnline := s.AggregateTrafficByEmails(uniqueEmails)
 	traffic.Enable = hasEnabledClient
+
+	if mode, remark := s.resolveInfoNodeRemark(subId, uniqueEmails, traffic, len(result) > 0); mode != infoNodeNone {
+		dummyLink := fmt.Sprintf("socks://127.0.0.1:1080#%s", strings.ReplaceAll(url.QueryEscape(remark), "+", "%20"))
+		if mode == infoNodeExpired || mode == infoNodeDepleted {
+			return []string{dummyLink}, emails, lastOnline, traffic, nil
+		}
+		result = append([]string{dummyLink}, result...)
+	}
+
 	return result, emails, lastOnline, traffic, nil
 }
 
 // inboundLinks builds the share links for every distinct client of one inbound
 // the same way getSubs does — managed Host endpoints win over the plain link so
 // {{HOST}} and per-host variants render — but across all clients rather than a
-// single subId. Dedups duplicate client JSON entries by email (#5134). Backs the
-// panel's "Export all inbound links" so it matches the client/QR pages.
+// single subId. Resolves clients via clientsForLinkExport so UUID-bearing
+// protocols match the running Xray config (#6436) while WireGuard/AmneziaWG
+// keep per-inbound tunnel identity from settings. Dedups by email (#5134).
+// Backs the panel's "Export all inbound links" and matches client/QR pages.
 func (s *SubService) inboundLinks(inbound *model.Inbound) []string {
-	clients, err := s.inboundService.GetClients(inbound)
+	clients, err := s.clientsForLinkExport(inbound)
 	if err != nil {
 		return nil
 	}
@@ -425,13 +559,13 @@ func (s *SubService) AggregateTrafficByEmails(emails []string) (xray.ClientTraff
 	// runtime traffic rows. In a multi-node setup the node snapshot can reset
 	// client_traffics.total/expiry_time to 0, so fall back to the clients
 	// table to keep the Subscription-Userinfo header in sync with the UI (#4645).
-	limits := make(map[string][2]int64, len(emails))
+	limits := make(map[string]model.ClientRecord, len(emails))
 	var records []model.ClientRecord
 	if err := db.Model(&model.ClientRecord{}).Where("email IN ?", emails).Find(&records).Error; err != nil {
 		logger.Warning("SubService - AggregateTrafficByEmails: load client limits:", err)
 	} else {
 		for _, r := range records {
-			limits[r.Email] = [2]int64{r.TotalGB, r.ExpiryTime}
+			limits[r.Email] = r
 		}
 	}
 
@@ -441,25 +575,33 @@ func (s *SubService) AggregateTrafficByEmails(emails []string) (xray.ClientTraff
 		if ct.LastOnline > lastOnline {
 			lastOnline = ct.LastOnline
 		}
-		total, expiry := ct.Total, ct.ExpiryTime
+		total, expiry, resetDay := ct.Total, ct.ExpiryTime, ct.ResetDay
 		if lim, ok := limits[ct.Email]; ok {
+			resetDay = lim.ResetDay
 			if total == 0 {
-				total = lim[0]
+				total = lim.TotalGB
 			}
 			if expiry == 0 {
-				expiry = lim[1]
+				expiry = lim.ExpiryTime
 			}
+		}
+		if expiry <= 0 {
+			resetDay = 0
 		}
 		if first {
 			agg.Up = ct.Up
 			agg.Down = ct.Down
 			agg.Total = total
 			agg.ExpiryTime = subscriptionExpiryFromClient(now, expiry)
+			agg.ResetDay = resetDay
 			first = false
 			continue
 		}
 		agg.Up += ct.Up
 		agg.Down += ct.Down
+		if resetDay != agg.ResetDay {
+			agg.ResetDay = 0
+		}
 		if agg.Total == 0 || total == 0 {
 			agg.Total = 0
 		} else {
@@ -492,7 +634,7 @@ func (s *SubService) getInboundsBySubId(subId string) ([]*model.Inbound, error) 
 		JOIN client_inbounds ON client_inbounds.inbound_id = inbounds.id
 		JOIN clients ON clients.id = client_inbounds.client_id
 		WHERE
-			inbounds.protocol in ('vmess','vless','trojan','shadowsocks','hysteria','wireguard','amneziawg','mtproto')
+			inbounds.protocol in ('vmess','vless','trojan','shadowsocks','hysteria','wireguard','amneziawg','mtproto','tuic')
 			AND clients.sub_id = ? AND inbounds.enable = ?
 	)`, subId, true).Order("sub_sort_index ASC").Order("id ASC").Find(&inbounds).Error
 	if err != nil {
@@ -645,8 +787,85 @@ func (s *SubService) GetLink(inbound *model.Inbound, email string) string {
 		return s.genWireguardLink(inbound, email)
 	case "amneziawg":
 		return s.genAmneziaWGLink(inbound, email)
+	case "tuic":
+		return s.genTuicLink(inbound, email)
 	}
 	return ""
+}
+
+func (s *SubService) genTuicLink(inbound *model.Inbound, email string) string {
+	if inbound.Protocol != model.TUIC {
+		return ""
+	}
+	inst, ok := tuic.InstanceFromInbound(inbound)
+	if !ok {
+		return ""
+	}
+	var client *tuic.TuicClientSettings
+	for _, c := range inst.Clients {
+		if c.Email == email {
+			client = &c
+			break
+		}
+	}
+	if client == nil && len(inst.Clients) > 0 && email == "" {
+		client = &inst.Clients[0]
+	}
+	if client == nil || client.UUID == "" || client.Password == "" {
+		return ""
+	}
+
+	params := make(map[string]string)
+	cc := inst.CongestionControl
+	if cc == "" {
+		cc = "bbr"
+	}
+	params["congestion_control"] = cc
+
+	if len(inst.ALPN) > 0 {
+		params["alpn"] = strings.Join(inst.ALPN, ",")
+	}
+	if inst.SNI != "" {
+		params["sni"] = inst.SNI
+	}
+	if inst.UDPRelayMode != "" {
+		params["udp_relay_mode"] = inst.UDPRelayMode
+	}
+	params["allow_insecure"] = "0"
+
+	stream := unmarshalStreamSettings(inbound.StreamSettings)
+	externalProxies, _ := stream["externalProxy"].([]any)
+	if len(externalProxies) > 0 {
+		links := make([]string, 0, len(externalProxies))
+		for _, externalProxy := range externalProxies {
+			ep, ok := externalProxy.(map[string]any)
+			if !ok {
+				continue
+			}
+			dest, _ := ep["dest"].(string)
+			portF, okPort := ep["port"].(float64)
+			if dest == "" || !okPort {
+				continue
+			}
+			epParams := cloneStringMap(params)
+			if sni, ok := externalProxySNI(ep); ok {
+				epParams["sni"] = sni
+			}
+			if alpn, ok := externalProxyALPN(ep["alpn"]); ok {
+				epParams["alpn"] = alpn
+			}
+			if ai, ok := ep["allowInsecure"].(bool); ok && ai {
+				epParams["allow_insecure"] = "1"
+			}
+			link := fmt.Sprintf("tuic://%s:%s@%s", encodeUserinfo(client.UUID), encodeUserinfo(client.Password), joinHostPort(dest, int(portF)))
+			links = append(links, buildLinkWithParams(link, epParams, s.endpointRemark(inbound, email, ep, "")))
+		}
+		return strings.Join(links, "\n")
+	}
+
+	host := s.resolveInboundAddress(inbound)
+	link := fmt.Sprintf("tuic://%s:%s@%s", encodeUserinfo(client.UUID), encodeUserinfo(client.Password), joinHostPort(host, inbound.Port))
+	return buildLinkWithParams(link, params, s.genRemark(inbound, email, "", ""))
 }
 
 // genWireguardLink builds a per-client wireguard:// share link mirroring the
@@ -685,8 +904,8 @@ func (s *SubService) genWireguardLink(inbound *model.Inbound, email string) stri
 	if client.PreSharedKey != "" {
 		params["presharedkey"] = client.PreSharedKey
 	}
-	if client.KeepAlive > 0 {
-		params["keepalive"] = strconv.Itoa(client.KeepAlive)
+	if ka := client.KeepAliveSeconds(); ka > 0 {
+		params["keepalive"] = strconv.Itoa(ka)
 	}
 	return buildLinkWithParams(link, params, s.genRemark(inbound, email, "", ""))
 }
@@ -730,9 +949,9 @@ func amneziaWGConfigText(server *amneziawg.ServerSettings, client *model.Client,
 	if len(dns) > 0 {
 		fmt.Fprintf(&b, "DNS = %s\n", strings.Join(dns, ", "))
 	}
-	if server.MTU > 0 {
-		fmt.Fprintf(&b, "MTU = %d\n", server.MTU)
-	}
+	// Always emitted: a missing MTU line leaves the client on its own 1420
+	// default and fragments the client-to-server direction once S4 passes 20.
+	fmt.Fprintf(&b, "MTU = %d\n", amneziawg.EffectiveMTU(server.MTU, server.S4))
 
 	fmt.Fprintf(&b, "Jc = %d\n", server.Jc)
 	fmt.Fprintf(&b, "Jmin = %d\n", server.Jmin)
@@ -787,8 +1006,8 @@ func amneziaWGConfigText(server *amneziawg.ServerSettings, client *model.Client,
 	}
 	b.WriteString("AllowedIPs = 0.0.0.0/0, ::/0\n")
 	fmt.Fprintf(&b, "Endpoint = %s:%d", host, port)
-	if client.KeepAlive > 0 {
-		fmt.Fprintf(&b, "\nPersistentKeepalive = %d", client.KeepAlive)
+	if ka := client.KeepAliveSeconds(); ka > 0 {
+		fmt.Fprintf(&b, "\nPersistentKeepalive = %d", ka)
 	}
 
 	return b.String()
@@ -821,12 +1040,8 @@ func (s *SubService) genAmneziaWGLink(inbound *model.Inbound, email string) stri
 	return "vpn://" + base64.RawURLEncoding.EncodeToString([]byte(text))
 }
 
-// genMtprotoLink builds a per-client Telegram proxy deep link for an mtproto
-// inbound: the server/port pair plus the client's own FakeTLS secret. The link
-// carries no remark fragment — Telegram proxy deep links have no name field, and
-// a trailing "#remark" is appended to the last query value by lenient parsers,
-// corrupting the server address. The remark is shown separately in the panel UI.
-// Returns "" when the client has no secret.
+// genMtprotoLink builds one Telegram link per advertised endpoint with the client's FakeTLS secret.
+// It omits remarks because lenient parsers fold a fragment into the last query value.
 func (s *SubService) genMtprotoLink(inbound *model.Inbound, email string) string {
 	if inbound.Protocol != model.MTProto {
 		return ""
@@ -835,12 +1050,28 @@ func (s *SubService) genMtprotoLink(inbound *model.Inbound, email string) string
 	if !ok || resolved.Secret == "" {
 		return ""
 	}
-	params := map[string]string{
-		"server": s.resolveInboundAddress(inbound),
-		"port":   fmt.Sprintf("%d", inbound.Port),
-		"secret": resolved.Secret,
+	endpoints := []ShareEndpoint{s.inboundDefaultEndpoint(inbound)}
+	stream := unmarshalStreamSettings(inbound.StreamSettings)
+	if externalProxies, ok := stream["externalProxy"].([]any); ok && len(externalProxies) > 0 {
+		overrides := make([]ShareEndpoint, 0, len(externalProxies))
+		for _, raw := range externalProxies {
+			if ep, ok := raw.(map[string]any); ok {
+				overrides = append(overrides, externalProxyToEndpoint(ep))
+			}
+		}
+		if len(overrides) > 0 {
+			endpoints = overrides
+		}
 	}
-	return buildLinkWithParams("tg://proxy", params, "")
+	links := make([]string, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		links = append(links, buildLinkWithParams("tg://proxy", map[string]string{
+			"server": endpoint.Address,
+			"port":   fmt.Sprintf("%d", endpoint.Port),
+			"secret": resolved.Secret,
+		}, ""))
+	}
+	return strings.Join(links, "\n")
 }
 
 // Protocol link generators are intentionally ordered as:
@@ -1184,9 +1415,8 @@ func (s *SubService) genHysteriaLink(inbound *model.Inbound, email string) strin
 		}
 	}
 
-	// salamander obfs (Hysteria2). Emit only the standard URI fields;
-	// the non-standard fm=<json> finalmask dump breaks mihomo and other
-	// Hysteria2 clients that reject unknown query params.
+	// salamander obfs (Hysteria2): standard URI fields only -- an fm=<json>
+	// dump breaks strict clients. packetSize exports as v2rayN's gecko pair.
 	if finalmask, ok := stream["finalmask"].(map[string]any); ok {
 		if udpMasks, ok := finalmask["udp"].([]any); ok {
 			for _, m := range udpMasks {
@@ -1196,13 +1426,23 @@ func (s *SubService) genHysteriaLink(inbound *model.Inbound, email string) strin
 				}
 				settings, _ := mask["settings"].(map[string]any)
 				if pw, ok := settings["password"].(string); ok && pw != "" {
-					if extra := extraSalamanderKeys(settings); len(extra) > 0 {
+					packetSize, _ := settings["packetSize"].(string)
+					gecko := parseHysteriaPacketSize(packetSize)
+					if gecko != "" {
+						params["obfs"] = "gecko"
+						params["minPacketSize"], params["maxPacketSize"] = splitHysteriaPacketSize(gecko)
+					}
+					// packetSize rides its own URI fields; anything else still
+					// breaks standard clients and must warn even when gecko fires.
+					if extra := extraSalamanderKeys(settings, gecko != ""); len(extra) > 0 {
 						warningKey := fmt.Sprintf("%d:%v", inbound.Id, extra)
 						if _, loaded := salamanderWarningSeen.LoadOrStore(warningKey, struct{}{}); !loaded {
 							logger.Warningf("SubService - inbound %d: salamander settings %v cannot be expressed in a hysteria2 URI; standard clients will fail the handshake", inbound.Id, extra)
 						}
 					}
-					params["obfs"] = "salamander"
+					if params["obfs"] == "" {
+						params["obfs"] = "salamander"
+					}
 					params["obfs-password"] = pw
 					break
 				}
@@ -1256,16 +1496,75 @@ func (s *SubService) genHysteriaLink(inbound *model.Inbound, email string) strin
 	return buildLinkWithParams(link, params, s.genRemark(inbound, email, "", "quic"))
 }
 
-// hysteriaHopPorts returns the configured Hysteria2 UDP port-hopping range
-// (finalmask.quicParams.udpHop.ports), or "" when port hopping is off. The
-// range is emitted as the v2rayN-compatible `mport` query param; the URL port
-// field stays numeric so .NET-Uri-based importers (v2rayN) can parse the link.
+// hysteriaHopPorts returns the configured Hysteria2 UDP port-hopping range, or
+// "" when port hopping is off. The range is emitted as the v2rayN-compatible
+// `mport` query param; the URL port field stays numeric so .NET-Uri-based
+// importers (v2rayN) can parse the link.
 func hysteriaHopPorts(stream map[string]any) string {
 	finalmask, _ := stream["finalmask"].(map[string]any)
+	if ports := udpHopMaskPorts(finalmask); ports != "" {
+		return ports
+	}
 	quicParams, _ := finalmask["quicParams"].(map[string]any)
 	udpHop, _ := quicParams["udpHop"].(map[string]any)
 	ports, _ := udpHop["ports"].(string)
 	return strings.TrimSpace(ports)
+}
+
+// udpHopMaskPorts reads remotePorts off the first "udphop" UDP mask. xray-core
+// 26.9.9 moved hopping here from finalmask.quicParams.udpHop, which it now ignores.
+func udpHopMaskPorts(finalmask map[string]any) string {
+	masks, _ := finalmask["udp"].([]any)
+	for _, rawMask := range masks {
+		mask, _ := rawMask.(map[string]any)
+		if maskType, _ := mask["type"].(string); maskType != "udphop" {
+			continue
+		}
+		settings, _ := mask["settings"].(map[string]any)
+		ports, _ := settings["remotePorts"].(string)
+		if ports = strings.TrimSpace(ports); ports != "" {
+			return ports
+		}
+	}
+	return ""
+}
+
+// gecko packetSize bounds mirror xray-core's salamander buffer cap and the
+// frontend editor, so both link generators emit identical URIs.
+const (
+	geckoMinPacketSize = 1
+	geckoMaxPacketSize = 2048
+)
+
+// parseHysteriaPacketSize validates an xray-core salamander packetSize range
+// ("512-1200", the Gecko obfs marker). Returns canonical "min-max" or "".
+func parseHysteriaPacketSize(value string) string {
+	minStr, maxStr, ok := strings.Cut(value, "-")
+	if !ok || minStr == "" || maxStr == "" {
+		return ""
+	}
+	for _, c := range minStr {
+		if c < '0' || c > '9' {
+			return ""
+		}
+	}
+	for _, c := range maxStr {
+		if c < '0' || c > '9' {
+			return ""
+		}
+	}
+	minVal, err1 := strconv.Atoi(minStr)
+	maxVal, err2 := strconv.Atoi(maxStr)
+	if err1 != nil || err2 != nil ||
+		minVal < geckoMinPacketSize || maxVal < minVal || maxVal > geckoMaxPacketSize {
+		return ""
+	}
+	return fmt.Sprintf("%d-%d", minVal, maxVal)
+}
+
+func splitHysteriaPacketSize(value string) (string, string) {
+	minStr, maxStr, _ := strings.Cut(value, "-")
+	return minStr, maxStr
 }
 
 // loadNodes refreshes nodesByID from the DB. Called once per request so
@@ -1995,9 +2294,18 @@ func appendQueryAndFragment(link string, params map[string]string, fragment, sec
 
 	if fragment != "" {
 		sb.WriteByte('#')
-		// Match the frontend's encodeURIComponent(remark): spaces become
-		// %20 (not + as in query strings).
-		sb.WriteString(strings.ReplaceAll(url.QueryEscape(fragment), "+", "%20"))
+		if before, after, ok := strings.Cut(fragment, "?serverDescription="); ok {
+			if _, err := base64.StdEncoding.DecodeString(after); err == nil && len(after) > 0 && !strings.ContainsAny(after, " \r\n\t#&") {
+				sb.WriteString(strings.ReplaceAll(url.QueryEscape(before), "+", "%20"))
+				sb.WriteString("?serverDescription=")
+				sb.WriteString(after)
+			} else {
+				sb.WriteString(strings.ReplaceAll(url.QueryEscape(fragment), "+", "%20"))
+			}
+		} else {
+			// Match the frontend's encodeURIComponent(remark): spaces become %20.
+			sb.WriteString(strings.ReplaceAll(url.QueryEscape(fragment), "+", "%20"))
+		}
 	}
 	return sb.String()
 }
@@ -2319,6 +2627,7 @@ var validFinalMaskUDPTypes = map[string]struct{}{
 	"noise":         {},
 	"header-custom": {},
 	"realm":         {},
+	"udphop":        {},
 }
 
 var validFinalMaskTCPTypes = map[string]struct{}{
@@ -2851,14 +3160,15 @@ func getHostFromXFH(s string) (string, error) {
 	return s, nil
 }
 
-// extraSalamanderKeys lists salamander settings the hysteria2 URI cannot carry.
-// A server using them rejects every client built from the emitted link.
-func extraSalamanderKeys(settings map[string]any) []string {
+// extraSalamanderKeys lists salamander settings unexpressible in hysteria2 URI;
+// a server using any reported key rejects clients built from the link.
+func extraSalamanderKeys(settings map[string]any, expressedPacketSize bool) []string {
 	var extra []string
 	for k := range settings {
-		if k != "password" {
-			extra = append(extra, k)
+		if k == "password" || (k == "packetSize" && expressedPacketSize) {
+			continue
 		}
+		extra = append(extra, k)
 	}
 	sort.Strings(extra)
 	return extra

@@ -75,6 +75,7 @@ import {
   MixedFields,
   MtprotoFields,
   ShadowsocksFields,
+  TuicFields,
   TunFields,
   TunnelFields,
   VlessFields,
@@ -292,7 +293,8 @@ export default function InboundFormModal({
   const hasSelectableTransport =
     protocol !== Protocols.HYSTERIA &&
     protocol !== Protocols.WIREGUARD &&
-    protocol !== Protocols.TUNNEL;
+    protocol !== Protocols.TUNNEL &&
+    protocol !== Protocols.TUIC;
 
   const wPort = useWatch({ control, name: 'port' });
   const wListen = (useWatch({ control, name: 'listen' }) ?? '') as string;
@@ -652,8 +654,14 @@ export default function InboundFormModal({
    */
   useEffect(() => {
     if (!open) return;
-    if (!availableNodesFetched || !protocol) return;
+    if (!protocol) return;
     const current = getV('shareAddrStrategy') as InboundFormValues['shareAddrStrategy'] | undefined;
+    if (protocol === Protocols.MTPROTO) {
+      if (current !== 'listen') setV('shareAddrStrategy', 'listen');
+      if (getV('shareAddr')) setV('shareAddr', '');
+      return;
+    }
+    if (!availableNodesFetched) return;
     if (!nodeShareOptionAvailable && (current ?? 'node') === 'node') {
       setV('shareAddrStrategy', 'listen');
     }
@@ -721,6 +729,7 @@ export default function InboundFormModal({
     const parsed = InboundFormSchema.safeParse(values);
     if (!parsed.success) {
       const issues = parsed.error.issues;
+      setActiveTab(tabForValidationPath(issues[0].path));
       messageApi.error(formatInboundValidation(issues, values, t));
       console.error(
         '[InboundFormModal] schema validation failed:',
@@ -891,39 +900,42 @@ export default function InboundFormModal({
         </FormField>
       )}
 
-      {!simpleMode && (
-        <FormField
-          name="shareAddrStrategy"
-          label={labelWithHint(
-            t('pages.inbounds.form.shareAddrStrategy'),
-            t('pages.inbounds.form.shareAddrStrategyHelp'),
-          )}
-        >
-          <Select
-            options={SHARE_ADDR_STRATEGIES.filter(
-              (strategy) => strategy !== 'node' || nodeShareOptionAvailable,
-            ).map((strategy) => ({
-              value: strategy,
-              label: t(`pages.inbounds.form.shareAddrStrategyOptions.${strategy}`),
-            }))}
-          />
-        </FormField>
-      )}
+      {!simpleMode && protocol !== Protocols.MTPROTO && (
+        <>
+          <FormField
+            name="shareAddrStrategy"
+            label={labelWithHint(
+              t('pages.inbounds.form.shareAddrStrategy'),
+              t('pages.inbounds.form.shareAddrStrategyHelp'),
+            )}
+          >
+            <Select
+              options={SHARE_ADDR_STRATEGIES.filter(
+                (strategy) => strategy !== 'node' || nodeShareOptionAvailable,
+              ).map((strategy) => ({
+                value: strategy,
+                label: t(`pages.inbounds.form.shareAddrStrategyOptions.${strategy}`),
+              }))}
+            />
+          </FormField>
 
-      {!simpleMode && shareAddrStrategy === 'custom' && (
-        <FormField
-          name="shareAddr"
-          label={labelWithHint(
-            t('pages.inbounds.form.shareAddr'),
-            t('pages.inbounds.form.shareAddrHelp'),
+          {shareAddrStrategy === 'custom' && (
+            <FormField
+              name="shareAddr"
+              label={labelWithHint(
+                t('pages.inbounds.form.shareAddr'),
+                t('pages.inbounds.form.shareAddrHelp'),
+              )}
+              rules={{
+                validate: (value) =>
+                  isValidShareAddrInput(String(value ?? '')) ||
+                  t('pages.inbounds.form.shareAddrHelp'),
+              }}
+            >
+              <Input placeholder="edge.example.com" />
+            </FormField>
           )}
-          rules={{
-            validate: (value) =>
-              isValidShareAddrInput(String(value ?? '')) || t('pages.inbounds.form.shareAddrHelp'),
-          }}
-        >
-          <Input placeholder="edge.example.com" />
-        </FormField>
+        </>
       )}
 
       {!simpleMode && (
@@ -1038,6 +1050,8 @@ export default function InboundFormModal({
           regenInboundAwgObfuscation={regenInboundAwgObfuscation}
         />
       )}
+
+      {protocol === Protocols.TUIC && <TuicFields />}
 
       {protocol === Protocols.TUN && <TunFields />}
 
@@ -1407,6 +1421,7 @@ export default function InboundFormModal({
                   Protocols.WIREGUARD,
                   Protocols.MTPROTO,
                   Protocols.AMNEZIAWG,
+                  Protocols.TUIC,
                 ] as string[]).includes(protocol) ||
                   isFallbackHost)
                   ? [

@@ -19,6 +19,16 @@ import (
 	"gorm.io/gorm"
 )
 
+// droppedClientNeedsRestart is what restartXrayOnClientDisable asks for: the core
+// API drops the credential only, so a live session needs the process replaced.
+func droppedClientNeedsRestart() bool {
+	on, err := (&SettingService{}).GetRestartXrayOnClientDisable()
+	if err != nil {
+		logger.Warning("get RestartXrayOnClientDisable failed:", err)
+	}
+	return on
+}
+
 func sameClientConfigExceptUpdatedAt(a, b map[string]any) bool {
 	aa := maps.Clone(a)
 	bb := maps.Clone(b)
@@ -227,8 +237,12 @@ func (s *ClientService) delInboundClients(inboundSvc *InboundService, inboundId 
 					}
 				}
 			}
-		} else if nodePush {
-			if err1 := nodeRt.DeleteUser(context.Background(), oldInbound, t.email); err1 != nil {
+		} else if nodePush && !nodePushFailed {
+			// First failure ends the batch push; the reconcile converges the rest.
+			ctx, cancel := nodePushContext()
+			err1 := nodeRt.DeleteUser(ctx, oldInbound, t.email)
+			cancel()
+			if err1 != nil {
 				logger.Warning("Error in deleting client on", nodeRt.Name(), ":", err1)
 				nodePushFailed = true
 			}
@@ -447,6 +461,16 @@ func (s *ClientService) AddInboundClient(inboundSvc *InboundService, data *model
 			if client.AdTag != "" && !model.ValidMtprotoAdTag(client.AdTag) {
 				return false, common.NewError("mtproto client ad tag must be 32 hex characters")
 			}
+		case "tuic":
+			if client.ID == "" {
+				return false, common.NewError("empty client ID")
+			}
+			if client.Password == "" {
+				return false, common.NewError("tuic client requires a password")
+			}
+			if client.Email == "" {
+				return false, common.NewError("empty client email")
+			}
 		default:
 			if client.ID == "" {
 				return false, common.NewError("empty client ID")
@@ -559,6 +583,8 @@ func (s *ClientService) AddInboundClient(inboundSvc *InboundService, data *model
 			inboundSvc.applyLocalMtproto(oldInbound.Id)
 		} else if oldInbound.Protocol == model.AmneziaWG {
 			inboundSvc.applyLocalAmneziaWG(oldInbound.Id)
+		} else if oldInbound.Protocol == model.TUIC {
+			inboundSvc.applyLocalTuic(oldInbound.Id)
 		} else {
 			for _, client := range clients {
 				if len(client.Email) == 0 {
@@ -583,7 +609,8 @@ func (s *ClientService) AddInboundClient(inboundSvc *InboundService, data *model
 					"publicKey":    client.PublicKey,
 					"allowedIPs":   client.AllowedIPs,
 					"preSharedKey": client.PreSharedKey,
-					"keepAlive":    keepAliveStr(client.KeepAlive),
+					"keepAlive":    keepAliveStr(client.KeepAliveSeconds()),
+					"reverse":      client.Reverse,
 				})
 				if err1 == nil {
 					logger.Debug("Client added on", rt.Name(), ":", client.Email)
@@ -601,8 +628,17 @@ func (s *ClientService) AddInboundClient(inboundSvc *InboundService, data *model
 			push = false
 		}
 		for _, client := range clients {
+			// /clients/add on the node historically coerced enable=true; skip live
+			// push for disabled clients and leave dirty so reconcile converges.
+			if !client.Enable {
+				push = false
+				continue
+			}
 			if push {
-				if err1 := rt.AddClient(context.Background(), oldInbound, client); err1 != nil {
+				ctx, cancel := nodePushContext()
+				err1 := rt.AddClient(ctx, oldInbound, client)
+				cancel()
+				if err1 != nil {
 					logger.Warning("Error in adding client on", rt.Name(), ":", err1)
 					push = false
 				}
@@ -727,7 +763,7 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 		if clients[0].PreSharedKey == "" {
 			clients[0].PreSharedKey = old.PreSharedKey
 		}
-		if clients[0].KeepAlive == 0 {
+		if clients[0].KeepAlive == nil {
 			clients[0].KeepAlive = old.KeepAlive
 		}
 		// ForwardedPorts is AmneziaWG-only (WireGuard's own inbound never
@@ -794,8 +830,8 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 				if clients[0].PreSharedKey != "" {
 					newMap["preSharedKey"] = clients[0].PreSharedKey
 				}
-				if clients[0].KeepAlive > 0 {
-					newMap["keepAlive"] = clients[0].KeepAlive
+				if ka := clients[0].KeepAliveSeconds(); ka > 0 {
+					newMap["keepAlive"] = ka
 				}
 				if oldInbound.Protocol == model.AmneziaWG && clients[0].ForwardedPorts != "" {
 					newMap["forwardedPorts"] = clients[0].ForwardedPorts
@@ -979,11 +1015,18 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 				inboundSvc.applyLocalMtproto(oldInbound.Id)
 			} else if oldInbound.Protocol == model.AmneziaWG {
 				inboundSvc.applyLocalAmneziaWG(oldInbound.Id)
+			} else if oldInbound.Protocol == model.TUIC {
+				inboundSvc.applyLocalTuic(oldInbound.Id)
 			} else {
 				if oldClients[clientIndex].Enable {
 					err1 := rt.RemoveUser(context.Background(), oldInbound, oldEmail)
 					if err1 == nil {
 						logger.Debug("Old client deleted on", rt.Name(), ":", oldEmail)
+						// The API removal is enough only while the client is re-added; a
+						// dropped one ends its session only through a restart.
+						if !clients[0].Enable && droppedClientNeedsRestart() {
+							needRestart = true
+						}
 					} else if strings.Contains(err1.Error(), fmt.Sprintf("User %s not found.", oldEmail)) {
 						logger.Debug("User is already deleted. Nothing to do more...")
 					} else {
@@ -1007,7 +1050,8 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 						"publicKey":    clients[0].PublicKey,
 						"allowedIPs":   clients[0].AllowedIPs,
 						"preSharedKey": clients[0].PreSharedKey,
-						"keepAlive":    keepAliveStr(clients[0].KeepAlive),
+						"keepAlive":    keepAliveStr(clients[0].KeepAliveSeconds()),
+						"reverse":      clients[0].Reverse,
 					})
 					if err1 == nil {
 						logger.Debug("Client edited on", rt.Name(), ":", clients[0].Email)
@@ -1018,7 +1062,10 @@ func (s *ClientService) UpdateInboundClient(inboundSvc *InboundService, data *mo
 				}
 			}
 		} else if push {
-			if err1 := rt.UpdateUser(context.Background(), oldInbound, oldEmail, clients[0]); err1 != nil {
+			ctx, cancel := nodePushContext()
+			err1 := rt.UpdateUser(ctx, oldInbound, oldEmail, clients[0])
+			cancel()
+			if err1 != nil {
 				logger.Warning("Error in updating client on", rt.Name(), ":", err1)
 			} else {
 				advancePushedInbound(rt, prevSettings, oldInbound)
@@ -1160,6 +1207,8 @@ func (s *ClientService) DelInboundClientByEmail(inboundSvc *InboundService, inbo
 				// Same reasoning as MTProto above: the interface config is
 				// regenerated from the full peer set, so any delete re-applies it.
 				inboundSvc.applyLocalAmneziaWG(oldInbound.Id)
+			} else if oldInbound.Protocol == model.TUIC {
+				inboundSvc.applyLocalTuic(oldInbound.Id)
 			} else if needApiDel {
 				// Local inbound: a disabled client isn't in the running Xray, so only
 				// a live one (needApiDel) needs an API removal.
@@ -1167,7 +1216,7 @@ func (s *ClientService) DelInboundClientByEmail(inboundSvc *InboundService, inbo
 					needRestart = true
 				} else if err1 := rt.RemoveUser(context.Background(), oldInbound, email); err1 == nil {
 					logger.Debug("Client deleted on", rt.Name(), ":", email)
-					needRestart = false
+					needRestart = droppedClientNeedsRestart()
 				} else if strings.Contains(err1.Error(), fmt.Sprintf("User %s not found.", email)) {
 					logger.Debug("User is already deleted. Nothing to do more...")
 				} else {
@@ -1182,12 +1231,14 @@ func (s *ClientService) DelInboundClientByEmail(inboundSvc *InboundService, inbo
 			// must remove the node's client record too, not just detach it from
 			// this inbound (#5797).
 			if push {
+				ctx, cancel := nodePushContext()
 				var err1 error
 				if fullDelete {
-					err1 = rt.DeleteClient(context.Background(), email)
+					err1 = rt.DeleteClient(ctx, email)
 				} else {
-					err1 = rt.DeleteUser(context.Background(), oldInbound, email)
+					err1 = rt.DeleteUser(ctx, oldInbound, email)
 				}
+				cancel()
 				if err1 != nil {
 					logger.Warning("Error in deleting client on", rt.Name(), ":", err1)
 				} else {
@@ -1343,6 +1394,9 @@ func (s *ClientService) applyClientFieldByEmail(inboundSvc *InboundService, clie
 
 	needRestart := false
 	found := false
+	// Built before any inbound is written, as in Update: only the applies
+	// overlap, so one node's round-trip no longer waits on the previous one.
+	applies := make([]inboundApply, 0, len(inboundIds))
 	for _, ibId := range inboundIds {
 		inbound, gErr := inboundSvc.GetInbound(ibId)
 		if gErr != nil {
@@ -1379,17 +1433,17 @@ func (s *ClientService) applyClientFieldByEmail(inboundSvc *InboundService, clie
 			return needRestart, mErr
 		}
 		inbound.Settings = string(modifiedSettings)
-		nr, uErr := s.UpdateInboundClient(inboundSvc, inbound, clientEmail)
-		if uErr != nil {
-			return needRestart, uErr
-		}
-		needRestart = needRestart || nr
+		data := inbound
+		applies = append(applies, inboundApply{id: ibId, run: func() (bool, error) {
+			return s.UpdateInboundClient(inboundSvc, data, clientEmail)
+		}})
 	}
 
 	if !found {
 		return needRestart, common.NewError("Client Not Found For Email:", clientEmail)
 	}
-	return needRestart, nil
+	nr, applyErr := fanoutInboundApplies(applies)
+	return needRestart || nr, applyErr
 }
 
 func (s *ClientService) ResetClientIpLimitByEmail(inboundSvc *InboundService, clientEmail string, count int) (bool, error) {

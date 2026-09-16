@@ -58,6 +58,8 @@ func filterOutboundsRejectedByCore(label string, outbounds []any) ([]any, []stri
 // subscription may aggregate many upstream outbounds into one document.
 const maxOutboundSubscriptionBytes int64 = 8 << 20
 
+const defaultOutboundSubscriptionUserAgent = "3x-ui-outbound-sub/1.0"
+
 var errOutboundSubscriptionBodyTooLarge = errors.New("outbound subscription response body exceeds size limit")
 
 func readBoundedOutboundSubscriptionBody(r io.Reader) ([]byte, error) {
@@ -164,7 +166,7 @@ func (s *OutboundSubscriptionService) nextDefaultSubPrefix(excludeId int) (strin
 	return fmt.Sprintf("sub%d-", defaultPrefixNumber(subs, excludeId)), nil
 }
 
-func (s *OutboundSubscriptionService) Create(remark, rawURL, tagPrefix string, enabled bool, updateInterval int, allowPrivate, prepend, allowInsecure bool) (*model.OutboundSubscription, error) {
+func (s *OutboundSubscriptionService) Create(remark, rawURL, tagPrefix, userAgent string, enabled bool, updateInterval int, allowPrivate, prepend, allowInsecure bool) (*model.OutboundSubscription, error) {
 	cleanURL, err := SanitizePublicHTTPURL(rawURL, allowPrivate)
 	if err != nil {
 		return nil, common.NewError("invalid subscription URL:", err)
@@ -193,6 +195,7 @@ func (s *OutboundSubscriptionService) Create(remark, rawURL, tagPrefix string, e
 		Enabled:        enabled,
 		AllowPrivate:   allowPrivate,
 		AllowInsecure:  allowInsecure,
+		UserAgent:      strings.TrimSpace(userAgent),
 		Prepend:        prepend,
 		Priority:       int(count),
 		TagPrefix:      prefix,
@@ -205,7 +208,7 @@ func (s *OutboundSubscriptionService) Create(remark, rawURL, tagPrefix string, e
 }
 
 // Update updates editable fields.
-func (s *OutboundSubscriptionService) Update(id int, remark, rawURL, tagPrefix string, enabled bool, updateInterval int, allowPrivate, prepend, allowInsecure bool) error {
+func (s *OutboundSubscriptionService) Update(id int, remark, rawURL, tagPrefix, userAgent string, enabled bool, updateInterval int, allowPrivate, prepend, allowInsecure bool) error {
 	sub, err := s.Get(id)
 	if err != nil {
 		return err
@@ -232,6 +235,7 @@ func (s *OutboundSubscriptionService) Update(id int, remark, rawURL, tagPrefix s
 	sub.Enabled = enabled
 	sub.AllowPrivate = allowPrivate
 	sub.AllowInsecure = allowInsecure
+	sub.UserAgent = strings.TrimSpace(userAgent)
 	sub.Prepend = prepend
 	sub.TagPrefix = prefix
 	sub.UpdateInterval = updateInterval
@@ -363,7 +367,11 @@ func (s *OutboundSubscriptionService) fetchAndStore(sub *model.OutboundSubscript
 		s.recordError(sub, err)
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "3x-ui-outbound-sub/1.0")
+	userAgent := strings.TrimSpace(sub.UserAgent)
+	if userAgent == "" {
+		userAgent = defaultOutboundSubscriptionUserAgent
+	}
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -411,24 +419,36 @@ func (s *OutboundSubscriptionService) fetchAndStore(sub *model.OutboundSubscript
 		}
 	}
 
+	// Drop core-rejected links before tagging: prevTagByIndex indexes the persisted
+	// (filtered) list, so positions must be counted in that same list.
+	var droppedByCore []string
+	keptLinks, keptIdentities := parsed[:0], identities[:0]
+	for i, ob := range parsed {
+		if _, dropped := filterOutboundsRejectedByCore(fmt.Sprintf("outbound sub %d", sub.Id), []any{map[string]any(ob)}); len(dropped) > 0 {
+			droppedByCore = append(droppedByCore, dropped...)
+			continue
+		}
+		keptLinks = append(keptLinks, ob)
+		keptIdentities = append(keptIdentities, identities[i])
+	}
+
 	// Assign tags with stability (identity reuse, positional fallback, then a
 	// fresh allocation), keeping tags unique within this batch. Extracted into a
 	// pure function so it can be unit-tested without network/DB. Tags are written
 	// back into the parsed outbounds in place.
-	assigned := assignStableTags(parsed, identities, prev, prevTagByIndex, sub.Id, sub.TagPrefix)
+	assigned := assignStableTags(keptLinks, keptIdentities, prev, prevTagByIndex, sub.Id, sub.TagPrefix)
 
 	// Persist identities for next time
 	newIdent := map[string]string{}
-	for i, id := range identities {
+	for i, id := range keptIdentities {
 		newIdent[id] = assigned[i]
 	}
 	identJSON, _ := json.Marshal(newIdent)
 
-	asAny := make([]any, len(parsed))
-	for i := range parsed {
-		asAny[i] = map[string]any(parsed[i])
+	kept := make([]any, len(keptLinks))
+	for i := range keptLinks {
+		kept[i] = map[string]any(keptLinks[i])
 	}
-	kept, droppedByCore := filterOutboundsRejectedByCore(fmt.Sprintf("outbound sub %d", sub.Id), asAny)
 
 	// Persist the outbounds (as compact JSON array)
 	obsJSON, _ := json.Marshal(kept)
@@ -462,6 +482,13 @@ func (s *OutboundSubscriptionService) recordError(sub *model.OutboundSubscriptio
 // written back into parsed[i]["tag"]. The returned slice holds the assigned tags
 // in order. When tagPrefix is empty a "sub<subID>-" prefix is used for fresh tags.
 func assignStableTags(parsed []link.Outbound, identities []string, prev map[string]string, prevTagByIndex map[int]string, subID int, tagPrefix string) []string {
+	reservedStableTags := map[string]bool{}
+	for i := range parsed {
+		if i < len(identities) && prev[identities[i]] != "" {
+			reservedStableTags[prev[identities[i]]] = true
+		}
+	}
+
 	used := map[string]bool{} // uniqueness within this refresh batch
 	assigned := make([]string, len(parsed))
 	for i := range parsed {
@@ -470,12 +497,14 @@ func assignStableTags(parsed []link.Outbound, identities []string, prev map[stri
 			id = identities[i]
 		}
 		candidate := ""
+		identityTag := ""
 		if old, ok := prev[id]; ok && old != "" {
 			candidate = old
+			identityTag = old
 		}
 		if candidate == "" {
 			// try to reuse by rough positional match from previous fetch (best effort)
-			if old, ok := prevTagByIndex[i]; ok && old != "" {
+			if old, ok := prevTagByIndex[i]; ok && old != "" && !reservedStableTags[old] {
 				candidate = old
 			}
 		}
@@ -493,7 +522,7 @@ func assignStableTags(parsed []link.Outbound, identities []string, prev map[stri
 		}
 		// ensure local uniqueness inside this batch
 		final := candidate
-		for k := 1; used[final]; k++ {
+		for k := 1; used[final] || (reservedStableTags[final] && final != identityTag); k++ {
 			final = fmt.Sprintf("%s-%d", candidate, k)
 		}
 		used[final] = true

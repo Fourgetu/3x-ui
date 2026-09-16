@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +23,11 @@ import (
 
 	"github.com/mhsanaei/3x-ui/v3/internal/logger"
 	"github.com/mhsanaei/3x-ui/v3/internal/web/service"
+)
+
+const (
+	subMihomoPath      = "/mihomo/"
+	subClashLegacyPath = "/clash-legacy/"
 )
 
 // writeSubError translates a service-layer result into an HTTP response.
@@ -45,13 +52,16 @@ type cachedSubTemplate struct {
 
 // SUBController handles HTTP requests for subscription links and JSON configurations.
 type SUBController struct {
-	subTitle         string
-	subSupportUrl    string
-	subProfileUrl    string
-	subAnnounce      string
-	subEnableRouting bool
-	subRoutingRules  string
-	subHideSettings  bool
+	subTitle            string
+	subSupportUrl       string
+	subProfileMode      string
+	subProfileUrl       string
+	subAnnounce         string
+	subEnableRouting    bool
+	subRoutingRules     string
+	subJsonRoutingRules string
+	subHideSettings     bool
+	happConfig          HappConfig
 
 	subIncyEnableRouting bool
 	subIncyRoutingRules  string
@@ -98,6 +108,8 @@ type subControllerConfig struct {
 
 	subJsonMux            string
 	subJsonRules          string
+	subJsonRoutingRules   string
+	subJsonDns            string
 	subJsonFinalMask      string
 	subJsonObservatory    string
 	subClashEnableRouting bool
@@ -105,11 +117,13 @@ type subControllerConfig struct {
 
 	subTitle         string
 	subSupportURL    string
+	subProfileMode   string
 	subProfileURL    string
 	subAnnounce      string
 	subEnableRouting bool
 	subRoutingRules  string
 	subHideSettings  bool
+	happConfig       HappConfig
 
 	subIncyEnableRouting bool
 	subIncyRoutingRules  string
@@ -177,6 +191,14 @@ func WithSUBJsonRules(value string) SUBControllerOption {
 	return func(config *subControllerConfig) { config.subJsonRules = value }
 }
 
+func WithSUBJsonRoutingRules(value string) SUBControllerOption {
+	return func(config *subControllerConfig) { config.subJsonRoutingRules = value }
+}
+
+func WithSUBJsonDns(value string) SUBControllerOption {
+	return func(config *subControllerConfig) { config.subJsonDns = value }
+}
+
 func WithSUBJsonFinalMask(value string) SUBControllerOption {
 	return func(config *subControllerConfig) { config.subJsonFinalMask = value }
 }
@@ -205,6 +227,10 @@ func WithSUBProfileURL(value string) SUBControllerOption {
 	return func(config *subControllerConfig) { config.subProfileURL = value }
 }
 
+func WithSUBProfileMode(value string) SUBControllerOption {
+	return func(config *subControllerConfig) { config.subProfileMode = value }
+}
+
 func WithSUBAnnounce(value string) SUBControllerOption {
 	return func(config *subControllerConfig) { config.subAnnounce = value }
 }
@@ -229,6 +255,10 @@ func WithSUBIncyRoutingRules(value string) SUBControllerOption {
 	return func(config *subControllerConfig) { config.subIncyRoutingRules = value }
 }
 
+func WithSUBHappConfig(value HappConfig) SUBControllerOption {
+	return func(config *subControllerConfig) { config.happConfig = value }
+}
+
 func defaultSUBControllerConfig() subControllerConfig {
 	return subControllerConfig{
 		subPath:        "/sub/",
@@ -237,6 +267,7 @@ func defaultSUBControllerConfig() subControllerConfig {
 		subEncrypt:     true,
 		remarkTemplate: service.DefaultRemarkTemplate,
 		updateInterval: "12",
+		subProfileMode: service.SubProfileModeNone,
 	}
 }
 
@@ -248,16 +279,20 @@ func NewSUBController(g *gin.RouterGroup, options ...SUBControllerOption) *SUBCo
 	}
 
 	sub := NewSubService(config.remarkTemplate)
-	subJsonSvc := NewSubJsonService(config.subJsonMux, config.subJsonRules, config.subJsonFinalMask, sub)
+	subJsonSvc := NewSubJsonService(config.subJsonMux, config.subJsonRules, config.subJsonFinalMask, config.subJsonRoutingRules, sub)
 	subJsonSvc.SetObservatoryConfig(config.subJsonObservatory)
+	subJsonSvc.SetDnsConfig(config.subJsonDns)
 	a := &SUBController{
-		subTitle:         config.subTitle,
-		subSupportUrl:    config.subSupportURL,
-		subProfileUrl:    config.subProfileURL,
-		subAnnounce:      config.subAnnounce,
-		subEnableRouting: config.subEnableRouting,
-		subRoutingRules:  config.subRoutingRules,
-		subHideSettings:  config.subHideSettings,
+		subTitle:            config.subTitle,
+		subSupportUrl:       config.subSupportURL,
+		subProfileMode:      config.subProfileMode,
+		subProfileUrl:       config.subProfileURL,
+		subAnnounce:         config.subAnnounce,
+		subEnableRouting:    config.subEnableRouting,
+		subRoutingRules:     config.subRoutingRules,
+		subJsonRoutingRules: config.subJsonRoutingRules,
+		subHideSettings:     config.subHideSettings,
+		happConfig:          config.happConfig,
 
 		subIncyEnableRouting: config.subIncyEnableRouting,
 		subIncyRoutingRules:  config.subIncyRoutingRules,
@@ -291,6 +326,8 @@ func (a *SUBController) initRouter(g *gin.RouterGroup) {
 	gLink := g.Group(a.subPath)
 	gLink.GET(":subid", a.subs)
 	gLink.HEAD(":subid", a.subs)
+	gLink.GET(":subid/hwid-status", a.hwidStatus)
+	gLink.HEAD(":subid/hwid-status", a.hwidStatus)
 	if a.jsonEnabled {
 		gJson := g.Group(a.subJsonPath)
 		gJson.GET(":subid", a.subJsons)
@@ -300,7 +337,40 @@ func (a *SUBController) initRouter(g *gin.RouterGroup) {
 		gClash := g.Group(a.subClashPath)
 		gClash.GET(":subid", a.subClashs)
 		gClash.HEAD(":subid", a.subClashs)
+		if sameSubscriptionPath(a.subClashPath, subMihomoPath) {
+			// The configured Clash path already provides the full Mihomo profile.
+		} else if owner := a.configuredSubscriptionPathOwner(subMihomoPath); owner != "" {
+			logger.Warningf("Mihomo subscription alias %q is unavailable because it conflicts with the configured %s path", subMihomoPath, owner)
+		} else {
+			gMihomo := g.Group(subMihomoPath)
+			gMihomo.GET(":subid", a.subClashs)
+			gMihomo.HEAD(":subid", a.subClashs)
+		}
+		if owner := a.configuredSubscriptionPathOwner(subClashLegacyPath); owner != "" {
+			logger.Warningf("Legacy Clash subscription alias %q is unavailable because it conflicts with the configured %s path", subClashLegacyPath, owner)
+		} else {
+			gLegacy := g.Group(subClashLegacyPath)
+			gLegacy.GET(":subid", a.subClashLegacy)
+			gLegacy.HEAD(":subid", a.subClashLegacy)
+		}
 	}
+}
+
+func sameSubscriptionPath(left, right string) bool {
+	return strings.Trim(left, "/") == strings.Trim(right, "/")
+}
+
+func (a *SUBController) configuredSubscriptionPathOwner(candidate string) string {
+	if sameSubscriptionPath(candidate, a.subPath) {
+		return "raw subscription"
+	}
+	if a.jsonEnabled && sameSubscriptionPath(candidate, a.subJsonPath) {
+		return "JSON subscription"
+	}
+	if a.clashEnabled && sameSubscriptionPath(candidate, a.subClashPath) {
+		return "Clash subscription"
+	}
+	return ""
 }
 
 // maybeServeSubPage renders the HTML info page when the request comes from a
@@ -345,7 +415,7 @@ func (a *SUBController) buildSubPageData(c *gin.Context) (PageData, bool) {
 	subReq := a.subService.ForRequest(host)
 	subReq.subscriptionBody = false
 	subs, emails, lastOnline, traffic, err := subReq.getSubs(subId)
-	if err != nil || len(subs) == 0 {
+	if err != nil || subs == nil {
 		writeSubError(c, err)
 		return PageData{}, false
 	}
@@ -397,7 +467,7 @@ func (a *SUBController) subs(c *gin.Context) {
 	if !a.enforceHwid(c) {
 		return
 	}
-	if shouldAutoServeClash(a.subClashAutoDetect, a.clashEnabled, false, userAgent, a.clashUserAgent) && a.serveClashBody(c, false) {
+	if shouldAutoServeClash(a.subClashAutoDetect, a.clashEnabled, false, userAgent, a.clashUserAgent) && a.serveClashBody(c, false, false) {
 		a.recordSubscriptionFetch(c)
 		logSubscriptionRoute(userAgent, "clash")
 		return
@@ -413,7 +483,7 @@ func (a *SUBController) subs(c *gin.Context) {
 	subReq := a.subService.ForRequest(host)
 	subReq.subscriptionBody = true
 	subs, _, _, traffic, err := subReq.getSubs(subId)
-	if err != nil || len(subs) == 0 {
+	if err != nil || subs == nil {
 		writeSubError(c, err)
 	} else {
 		var result strings.Builder
@@ -423,9 +493,8 @@ func (a *SUBController) subs(c *gin.Context) {
 		}
 
 		// Add headers
-		header := fmt.Sprintf("upload=%d; download=%d; total=%d; expire=%d", traffic.Up, traffic.Down, traffic.Total, traffic.ExpiryTime/1000)
-		profileURL := fmt.Sprintf("%s://%s%s", scheme, hostWithPort, c.Request.RequestURI)
-		metadata := a.metadataForSubRequest(func() *SubService { return subReq }, subId, profileURL)
+		header := subReq.subscriptionUserinfo(traffic)
+		metadata := a.metadataForSubRequest(func() *SubService { return subReq }, subId, builtinProfileURL(c, scheme, hostWithPort))
 		a.ApplyCommonHeaders(c, header, a.updateInterval, metadata.Title, metadata.SupportURL, metadata.ProfileURL, metadata.Announce, a.subEnableRouting, a.subRoutingRules, a.subHideSettings)
 
 		if a.subIncyEnableRouting && a.subIncyRoutingRules != "" {
@@ -592,6 +661,8 @@ func (a *SUBController) subPageContext(page PageData) map[string]any {
 	if datepicker == "" {
 		datepicker = "gregorian"
 	}
+	subUpdates, _ := a.settingService.GetSubUpdates()
+	updateHours, _ := strconv.Atoi(subUpdates)
 
 	return map[string]any{
 		"sId":           page.SId,
@@ -612,6 +683,7 @@ func (a *SUBController) subPageContext(page PageData) map[string]any {
 		"subClashUrl":   page.SubClashUrl,
 		"subTitle":      page.SubTitle,
 		"subSupportUrl": page.SubSupportUrl,
+		"subUpdates":    updateHours,
 		"links":         page.Result,
 		"emails":        page.Emails,
 		"datepicker":    datepicker,
@@ -652,6 +724,18 @@ func applyHwidHeaders(c *gin.Context, result service.HwidGateResult) {
 	if result.MaxDevicesReached {
 		c.Header("X-Hwid-Max-Devices-Reached", "true")
 	}
+}
+
+// hwidStatus serves read-only device-slot counters for a subscription. It
+// deliberately skips enforceHwid: asking about slots must not consume one.
+func (a *SUBController) hwidStatus(c *gin.Context) {
+	status, found, err := a.clientService.HwidSlotStatusForSubID(c.Param("subid"))
+	if err != nil || !found {
+		writeSubError(c, err)
+		return
+	}
+	setNoCacheHeaders(c)
+	c.JSON(http.StatusOK, status)
 }
 
 // setNoCacheHeaders marks a subscription page response as non-cacheable so VPN
@@ -705,9 +789,13 @@ func (a *SUBController) loadSubTemplate(themeDir string) (*template.Template, er
 	return tmpl, nil
 }
 
-// subJsons handles HTTP requests for JSON subscription configurations.
+// subJsons handles HTTP requests for JSON subscription configurations. The
+// device limit is enforced on every body route, ?view=raw included (#GHSA-7ww3).
 func (a *SUBController) subJsons(c *gin.Context) {
 	if strings.EqualFold(c.Query("view"), "raw") {
+		if !a.enforceHwid(c) {
+			return
+		}
 		if !a.serveJsonBody(c, a.jsonAlwaysArray, "application/json; charset=utf-8", true) {
 			writeSubError(c, nil)
 		}
@@ -738,17 +826,16 @@ func (a *SUBController) serveJsonBody(c *gin.Context, alwaysReturnArray bool, co
 		writeSubError(c, err)
 		return true
 	}
-	if len(jsonSub) == 0 {
+	if len(jsonSub) == 0 && header == "" {
 		return false
 	}
-	profileURL := fmt.Sprintf("%s://%s%s", scheme, hostWithPort, c.Request.RequestURI)
 	var subReq *SubService
 	metadata := a.metadataForSubRequest(func() *SubService {
 		if subReq == nil {
 			subReq = a.subService.ForRequest(host)
 		}
 		return subReq
-	}, subId, profileURL)
+	}, subId, builtinProfileURL(c, scheme, hostWithPort))
 	a.ApplyCommonHeaders(c, header, a.updateInterval, metadata.Title, metadata.SupportURL, metadata.ProfileURL, metadata.Announce, a.subEnableRouting, a.subRoutingRules, a.subHideSettings)
 	if rawDownload {
 		c.Writer.Header().Set("Content-Disposition", `attachment; filename="subscription.json"`)
@@ -759,8 +846,19 @@ func (a *SUBController) serveJsonBody(c *gin.Context, alwaysReturnArray bool, co
 }
 
 func (a *SUBController) subClashs(c *gin.Context) {
+	a.subClash(c, false)
+}
+
+func (a *SUBController) subClashLegacy(c *gin.Context) {
+	a.subClash(c, true)
+}
+
+func (a *SUBController) subClash(c *gin.Context, legacy bool) {
 	if strings.EqualFold(c.Query("view"), "raw") {
-		if !a.serveClashBody(c, true) {
+		if !a.enforceHwid(c) {
+			return
+		}
+		if !a.serveClashBody(c, true, legacy) {
 			writeSubError(c, nil)
 		}
 		a.recordSubscriptionFetch(c)
@@ -772,31 +870,40 @@ func (a *SUBController) subClashs(c *gin.Context) {
 	if !a.enforceHwid(c) {
 		return
 	}
-	if !a.serveClashBody(c, false) {
+	if !a.serveClashBody(c, false, legacy) {
 		writeSubError(c, nil)
 	}
 	a.recordSubscriptionFetch(c)
 }
 
-func (a *SUBController) serveClashBody(c *gin.Context, rawDownload bool) bool {
+func (a *SUBController) serveClashBody(c *gin.Context, rawDownload bool, legacy bool) bool {
 	subId := c.Param("subid")
 	scheme, host, hostWithPort, _ := a.subService.ResolveRequest(c)
-	clashSub, header, err := a.subClashService.GetClash(subId, host)
+	var clashSub, header string
+	var err error
+	if legacy {
+		clashSub, header, err = a.subClashService.GetClashLegacy(subId, host)
+	} else {
+		clashSub, header, err = a.subClashService.GetClash(subId, host)
+	}
 	if err != nil {
+		if errors.Is(err, errNoLegacyClashProxies) {
+			c.String(http.StatusUnprocessableEntity, err.Error())
+			return true
+		}
 		writeSubError(c, err)
 		return true
 	}
-	if len(clashSub) == 0 {
+	if len(clashSub) == 0 && header == "" {
 		return false
 	}
-	profileURL := fmt.Sprintf("%s://%s%s", scheme, hostWithPort, c.Request.RequestURI)
 	var subReq *SubService
 	metadata := a.metadataForSubRequest(func() *SubService {
 		if subReq == nil {
 			subReq = a.subService.ForRequest(host)
 		}
 		return subReq
-	}, subId, profileURL)
+	}, subId, builtinProfileURL(c, scheme, hostWithPort))
 	a.ApplyCommonHeaders(c, header, a.updateInterval, metadata.Title, metadata.SupportURL, metadata.ProfileURL, metadata.Announce, a.subEnableRouting, a.subRoutingRules, a.subHideSettings)
 	if rawDownload {
 		c.Writer.Header().Set("Content-Disposition", `attachment; filename="subscription.yaml"`)
@@ -806,6 +913,11 @@ func (a *SUBController) serveClashBody(c *gin.Context, rawDownload bool) bool {
 	}
 	c.Data(200, "application/yaml; charset=utf-8", []byte(clashSub))
 	return true
+}
+
+func builtinProfileURL(c *gin.Context, scheme, hostWithPort string) string {
+	// Drop download/format selectors so the opt-in link always opens the HTML page.
+	return fmt.Sprintf("%s://%s%s?html=1", scheme, hostWithPort, c.Request.URL.EscapedPath())
 }
 
 // ApplyCommonHeaders sets common HTTP headers for subscription responses including user info, update interval, and profile title.
@@ -838,16 +950,28 @@ func (a *SUBController) ApplyCommonHeaders(
 		c.Writer.Header().Set("Announce", "base64:"+base64.StdEncoding.EncodeToString([]byte(profileAnnounce)))
 	}
 
-	// Advanced (Happ). Routing stays independent of the enable flag; remote
-	// values come only from the validated cache and never delay this response.
 	rules, remote, routingErr := resolveRoutingSource(remoteRoutingHapp, profileRoutingRules)
+	if strings.TrimSpace(profileRoutingRules) == "" {
+		// Happ/INCY fetch the geo files the baked rules reference through this
+		// header; unlike the documents, it keeps the profile's own DNS servers.
+		rules, remote, routingErr = jsonRoutingHeaderSource(a.subJsonRoutingRules), false, nil
+	}
+	// The off values undo a previously pushed setting, so they ride the same
+	// opt-in as every other Happ header rather than reaching every Happ client.
+	happManaged := a.happConfig.AutoDetect && c.Request != nil && IsHappClient(c.GetHeader("User-Agent"))
 	if profileEnableRouting {
 		c.Writer.Header().Set("Routing-Enable", "true")
+	} else if happManaged {
+		c.Writer.Header().Set("Routing-Enable", "0")
 	}
 	if (routingErr == nil || !remote) && strings.TrimSpace(rules) != "" {
 		c.Writer.Header().Set("Routing", rules)
 	}
 	if profileHideSettings {
 		c.Writer.Header().Set("Hide-Settings", "1")
+	} else if happManaged {
+		c.Writer.Header().Set("Hide-Settings", "0")
 	}
+
+	ApplyHappHeaders(c, a.happConfig, happManaged)
 }

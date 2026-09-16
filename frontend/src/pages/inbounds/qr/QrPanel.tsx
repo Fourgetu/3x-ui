@@ -140,6 +140,8 @@ export default function QrPanel({
               className="qr-code"
               value={value}
               size={size}
+              errorLevel="L"
+              marginSize={2}
               type="svg"
               bordered={false}
               color="#000000"

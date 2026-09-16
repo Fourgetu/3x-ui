@@ -1,4 +1,6 @@
 import { lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { useLocation, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import {
   Badge,
@@ -23,6 +25,7 @@ import {
   Table,
   Tag,
   Tooltip,
+  Typography,
   message,
 } from 'antd';
 import type { ColumnsType, TableProps } from 'antd/es/table';
@@ -154,6 +157,40 @@ function ClientEmailList({ emails, total }: { emails: string[]; total: number })
   );
 }
 
+interface SummaryStatProps {
+  title: string;
+  value: number;
+  prefix: ReactNode;
+  emails?: string[];
+  selected?: boolean;
+  onSelect: () => void;
+}
+
+function SummaryStat({ title, value, prefix, emails, selected, onSelect }: SummaryStatProps) {
+  const stat = (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      className={selected ? 'summary-stat selected' : 'summary-stat'}
+      onClick={onSelect}
+      onKeyDown={activateOnKey(onSelect)}
+    >
+      <Statistic title={title} value={String(value)} prefix={prefix} />
+    </div>
+  );
+  if (!emails) return stat;
+  return (
+    <Popover
+      title={title}
+      open={value ? undefined : false}
+      content={<ClientEmailList emails={emails} total={value} />}
+    >
+      {stat}
+    </Popover>
+  );
+}
+
 type Bucket = 'active' | 'deactive' | 'depleted' | 'expiring';
 
 interface PersistedFilterState {
@@ -178,6 +215,7 @@ const INBOUND_PROTOCOL_COLORS: Record<string, string> = {
   http: 'purple',
   mixed: 'lime',
   tunnel: 'orange',
+  tuic: 'orange',
 };
 const INBOUND_CHIP_LIMIT = 1;
 // A shared empty array keeps the memoised chip cell from seeing a fresh prop for
@@ -388,7 +426,12 @@ export default function ClientsPage() {
   >(null);
 
   const initial = readFilterState();
-  const [searchKey, setSearchKey] = useState(initial.searchKey);
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const searchParam = searchParams.get('search');
+  const [searchKey, setSearchKey] = useState(
+    searchParam !== null ? searchParam : initial.searchKey,
+  );
   const [filters, setFilters] = useState<ClientFilters>(initial.filters);
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
 
@@ -411,6 +454,15 @@ export default function ClientsPage() {
   // debouncedSearch lags behind the input so we don't spam the server on every
   // keystroke; the search box still feels instant locally.
   const [debouncedSearch, setDebouncedSearch] = useState(searchKey);
+  const [prevLocationKey, setPrevLocationKey] = useState(location.key);
+
+  if (location.key !== prevLocationKey) {
+    setPrevLocationKey(location.key);
+    if (searchParam !== null) {
+      setSearchKey(searchParam);
+      setDebouncedSearch(searchParam);
+    }
+  }
 
   useEffect(() => {
     localStorage.setItem(
@@ -1117,7 +1169,7 @@ export default function ClientsPage() {
         width: 130,
         hidden: allGroups.length === 0,
         render: (_v, record) => {
-          if (!record.group) return <span style={{ color: 'rgba(0,0,0,0.45)' }}>—</span>;
+          if (!record.group) return <Typography.Text type="secondary">—</Typography.Text>;
           const isActive = filters.groups.includes(record.group);
           return (
             <Tag
@@ -1306,6 +1358,15 @@ export default function ClientsPage() {
   const someSelected =
     selectedRowKeys.length > 0 && selectedRowKeys.length < filteredClients.length;
 
+  const isOnlyBucket = (bucket: string) =>
+    filters.buckets.length === 1 && filters.buckets[0] === bucket;
+
+  // Clicking the card that is already the sole status filter clears it again.
+  function selectBucket(bucket: string | null) {
+    const buckets = bucket && !isOnlyBucket(bucket) ? [bucket] : [];
+    setFilters({ ...filters, buckets });
+  }
+
   function clearOneFilter<K extends keyof ClientFilters>(key: K) {
     if (key === 'expiryFrom' || key === 'expiryTo') {
       setFilters({ ...filters, expiryFrom: undefined, expiryTo: undefined });
@@ -1347,89 +1408,60 @@ export default function ClientsPage() {
                     <Card size="small" hoverable className="summary-card">
                       <Row gutter={[16, 12]}>
                         <Col xs={12} sm={8} md={4}>
-                          <Statistic
+                          <SummaryStat
                             title={t('clients')}
-                            value={String(summary.total)}
+                            value={summary.total}
                             prefix={<TeamOutlined />}
+                            onSelect={() => selectBucket(null)}
                           />
                         </Col>
                         <Col xs={12} sm={8} md={4}>
-                          <Popover
+                          <SummaryStat
                             title={t('online')}
-                            open={summary.onlineCount ? undefined : false}
-                            content={
-                              <ClientEmailList
-                                emails={summary.online}
-                                total={summary.onlineCount}
-                              />
-                            }
-                          >
-                            <Statistic
-                              title={t('online')}
-                              value={String(summary.onlineCount)}
-                              prefix={<span className="dot dot-blue" />}
-                            />
-                          </Popover>
+                            value={summary.onlineCount}
+                            emails={summary.online}
+                            prefix={<span className="dot dot-blue" />}
+                            selected={isOnlyBucket('online')}
+                            onSelect={() => selectBucket('online')}
+                          />
                         </Col>
                         <Col xs={12} sm={8} md={4}>
-                          <Popover
+                          <SummaryStat
                             title={t('depleted')}
-                            open={summary.depletedCount ? undefined : false}
-                            content={
-                              <ClientEmailList
-                                emails={summary.depleted}
-                                total={summary.depletedCount}
-                              />
-                            }
-                          >
-                            <Statistic
-                              title={t('depleted')}
-                              value={String(summary.depletedCount)}
-                              prefix={<span className="dot dot-red" />}
-                            />
-                          </Popover>
+                            value={summary.depletedCount}
+                            emails={summary.depleted}
+                            prefix={<span className="dot dot-red" />}
+                            selected={isOnlyBucket('depleted')}
+                            onSelect={() => selectBucket('depleted')}
+                          />
                         </Col>
                         <Col xs={12} sm={8} md={4}>
-                          <Popover
+                          <SummaryStat
                             title={t('depletingSoon')}
-                            open={summary.expiringCount ? undefined : false}
-                            content={
-                              <ClientEmailList
-                                emails={summary.expiring}
-                                total={summary.expiringCount}
-                              />
-                            }
-                          >
-                            <Statistic
-                              title={t('depletingSoon')}
-                              value={String(summary.expiringCount)}
-                              prefix={<span className="dot dot-orange" />}
-                            />
-                          </Popover>
+                            value={summary.expiringCount}
+                            emails={summary.expiring}
+                            prefix={<span className="dot dot-orange" />}
+                            selected={isOnlyBucket('expiring')}
+                            onSelect={() => selectBucket('expiring')}
+                          />
                         </Col>
                         <Col xs={12} sm={8} md={4}>
-                          <Popover
+                          <SummaryStat
                             title={t('disabled')}
-                            open={summary.deactiveCount ? undefined : false}
-                            content={
-                              <ClientEmailList
-                                emails={summary.deactive}
-                                total={summary.deactiveCount}
-                              />
-                            }
-                          >
-                            <Statistic
-                              title={t('disabled')}
-                              value={String(summary.deactiveCount)}
-                              prefix={<span className="dot dot-gray" />}
-                            />
-                          </Popover>
+                            value={summary.deactiveCount}
+                            emails={summary.deactive}
+                            prefix={<span className="dot dot-gray" />}
+                            selected={isOnlyBucket('deactive')}
+                            onSelect={() => selectBucket('deactive')}
+                          />
                         </Col>
                         <Col xs={12} sm={8} md={4}>
-                          <Statistic
+                          <SummaryStat
                             title={t('subscription.active')}
-                            value={String(summary.active)}
+                            value={summary.active}
                             prefix={<span className="dot dot-green" />}
+                            selected={isOnlyBucket('active')}
+                            onSelect={() => selectBucket('active')}
                           />
                         </Col>
                       </Row>
@@ -2023,8 +2055,15 @@ export default function ClientsPage() {
             open={bulkAdjustOpen}
             count={selectedRowKeys.length}
             onOpenChange={setBulkAdjustOpen}
-            onSubmit={async (addDays, addBytes, flow) => {
-              const msg = await bulkAdjust([...selectedRowKeys], addDays, addBytes, flow);
+            onSubmit={async (addDays, addBytes, flow, limitHwid, adTag) => {
+              const msg = await bulkAdjust(
+                [...selectedRowKeys],
+                addDays,
+                addBytes,
+                flow,
+                limitHwid,
+                adTag,
+              );
               if (msg?.success) {
                 setSelectedRowKeys([]);
                 return msg.obj ?? { adjusted: 0 };

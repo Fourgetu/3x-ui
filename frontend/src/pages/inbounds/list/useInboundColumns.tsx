@@ -24,6 +24,7 @@ import {
   shadowsocksNetworkLabel,
   tunnelNetworkLabel,
   mixedNetworkLabel,
+  formatHostRemarksLabel,
 } from './helpers';
 import type { ClientCountEntry, DBInboundRecord, InboundSpeedEntry, RowAction } from './types';
 
@@ -32,6 +33,7 @@ interface UseInboundColumnsParams {
   hasAnySubSortIndex: boolean;
   hasActiveNode: boolean;
   nodesById: Map<number, NodeRecord>;
+  hostRemarksByInboundId: Map<number, string[]>;
   clientCount: Record<number, ClientCountEntry>;
   inboundSpeed: Record<number, InboundSpeedEntry>;
   subEnable: boolean;
@@ -46,6 +48,7 @@ export function useInboundColumns({
   hasAnySubSortIndex,
   hasActiveNode,
   nodesById,
+  hostRemarksByInboundId,
   clientCount,
   inboundSpeed,
   subEnable,
@@ -139,18 +142,37 @@ export function useInboundColumns({
         dataIndex: 'remark',
         key: 'remark',
         align: 'center',
-        width: 90,
+        width: 140,
         sorter: (a, b) => compareText(a.remark, b.remark),
-        render: (_, record) => (
-          <>
-            {record.remark}
-            {isRelayEntryTag(record.tag) && (
-              <Tag color="cyan" style={{ marginInlineStart: 4 }}>
-                {t('pages.inbounds.relay.badge')}
-              </Tag>
-            )}
-          </>
-        ),
+        render: (_, record) => {
+          const hostRemarks = hostRemarksByInboundId.get(record.id) ?? [];
+          if (hostRemarks.length === 0) {
+            return (
+              <>
+                {record.remark || null}
+                {isRelayEntryTag(record.tag) && (
+                  <Tag color="cyan" style={{ marginInlineStart: 4 }}>
+                    {t('pages.inbounds.relay.badge')}
+                  </Tag>
+                )}
+              </>
+            );
+          }
+          const { display, full } = formatHostRemarksLabel(hostRemarks);
+          return (
+            <div className="inbound-remark-cell">
+              <div className="inbound-remark">{record.remark}</div>
+              <Tooltip title={full}>
+                <div className="inbound-host-remarks">({display})</div>
+              </Tooltip>
+              {isRelayEntryTag(record.tag) && (
+                <Tag color="cyan" style={{ marginInlineStart: 4 }}>
+                  {t('pages.inbounds.relay.badge')}
+                </Tag>
+              )}
+            </div>
+          );
+        },
       });
     }
 
@@ -210,7 +232,7 @@ export function useInboundColumns({
               {record.protocol}
             </Tag>,
           ];
-          if (record.isWireguard || record.isAmneziawg || record.isHysteria) {
+          if (record.isWireguard || record.isAmneziawg || record.isHysteria || record.isTuic) {
             tags.push(
               <Tag key="n" color="green">
                 UDP
@@ -464,6 +486,7 @@ export function useInboundColumns({
     hasAnySubSortIndex,
     hasActiveNode,
     nodesById,
+    hostRemarksByInboundId,
     clientCount,
     inboundSpeed,
     subEnable,

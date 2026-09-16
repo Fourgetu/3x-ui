@@ -14,6 +14,8 @@ import {
   preferPublicHost,
 } from '@/lib/xray/inbound-link';
 import { inboundFromDb, type DbInboundLike } from '@/lib/xray/inbound-from-db';
+import { withMtprotoHostEndpoints } from '@/lib/hosts/host-link';
+import type { HostRecord } from '@/schemas/api/host';
 import QrPanel from './QrPanel';
 import type { SubSettings } from '../useInbounds';
 
@@ -26,12 +28,13 @@ interface ClientSetting {
 interface QrCodeModalProps {
   open: boolean;
   onClose: () => void;
-  dbInbound: (DbInboundLike & { remark?: string }) | null;
+  dbInbound: (DbInboundLike & { id: number; remark?: string }) | null;
   client?: ClientSetting | null;
   clients?: ClientSetting[] | null;
   protocolOnly?: boolean;
   nodeAddress?: string;
   subSettings?: SubSettings;
+  hosts?: HostRecord[];
 }
 
 interface QrItem {
@@ -42,6 +45,8 @@ interface QrItem {
   showQr?: boolean;
 }
 
+const EMPTY_HOSTS: HostRecord[] = [];
+
 export default function QrCodeModal({
   open,
   onClose,
@@ -51,6 +56,7 @@ export default function QrCodeModal({
   protocolOnly = false,
   nodeAddress = '',
   subSettings,
+  hosts = EMPTY_HOSTS,
 }: QrCodeModalProps) {
   const { t } = useTranslation();
   const [links, setLinks] = useState<{ remark?: string; link: string }[]>([]);
@@ -73,6 +79,7 @@ export default function QrCodeModal({
     protocolOnly: boolean;
     nodeAddress: typeof nodeAddress;
     subSettings: typeof subSettings;
+    hosts: typeof hosts;
   } | null>(null);
   if (
     open &&
@@ -83,14 +90,21 @@ export default function QrCodeModal({
       syncedProps.clients !== clients ||
       syncedProps.protocolOnly !== protocolOnly ||
       syncedProps.nodeAddress !== nodeAddress ||
-      syncedProps.subSettings !== subSettings)
+      syncedProps.subSettings !== subSettings ||
+      syncedProps.hosts !== hosts)
   ) {
-    setSyncedProps({ dbInbound, client, clients, protocolOnly, nodeAddress, subSettings });
+    setSyncedProps({ dbInbound, client, clients, protocolOnly, nodeAddress, subSettings, hosts });
     const clientList = Array.isArray(clients) ? clients : client ? [client] : [];
-    const inbound = inboundFromDb(dbInbound);
     const fallbackHostname = preferPublicHost(
       window.location.hostname,
       subSettings?.publicHost ?? '',
+    );
+    const inbound = withMtprotoHostEndpoints(
+      inboundFromDb(dbInbound),
+      dbInbound.id,
+      hosts,
+      nodeAddress,
+      fallbackHostname,
     );
     if (inbound.protocol === Protocols.WIREGUARD) {
       const peerRemark = client?.email

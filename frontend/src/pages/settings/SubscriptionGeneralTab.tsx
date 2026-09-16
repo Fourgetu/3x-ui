@@ -1,4 +1,4 @@
-import { Alert, Button, Input, InputNumber, Switch, Tabs, Tag } from 'antd';
+import { Alert, Button, Input, InputNumber, Select, Switch, Tabs } from 'antd';
 import {
   BranchesOutlined,
   CompassOutlined,
@@ -9,24 +9,25 @@ import {
   SettingOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import type { AllSetting } from '@/models/setting';
+import type { SubProfileMode } from '@/schemas/setting';
 import { onNumber } from '@/utils/onNumber';
 import { DefaultSettingTag, SettingListItem } from '@/components/ui';
 import { RemarkTemplateField } from '@/components/form';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { catTabLabel } from './catTabLabel';
 import { sanitizePath, normalizePath } from './uriPath';
+import HappSettingsContent from './HappSettingsContent';
+import { remoteSourceBadge } from './subscriptionShared';
 
 interface SubscriptionGeneralTabProps {
   allSetting: AllSetting;
   updateSetting: (patch: Partial<AllSetting>) => void;
 }
 
-const isRemoteRoutingSource = (value: string) => /^https:\/\/\S+$/i.test(value.trim());
-
-const remoteSourceBadge = (value: string) =>
-  isRemoteRoutingSource(value) ? <Tag color="blue">HTTPS URL</Tag> : undefined;
+const PANEL_SETTINGS_TAB = '1';
+const HAPP_SETTINGS_TAB = '5';
 
 export default function SubscriptionGeneralTab({
   allSetting,
@@ -34,11 +35,15 @@ export default function SubscriptionGeneralTab({
 }: SubscriptionGeneralTabProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { isMobile } = useMediaQuery();
+  // Keep the URL semantic while mapping to the legacy numeric key used by these inner tabs.
+  const initialTab =
+    searchParams.get('subscriptionTab') === 'happ' ? HAPP_SETTINGS_TAB : PANEL_SETTINGS_TAB;
 
   return (
     <Tabs
-      defaultActiveKey="1"
+      defaultActiveKey={initialTab}
       items={[
         {
           key: '1',
@@ -184,6 +189,52 @@ export default function SubscriptionGeneralTab({
 
               <SettingListItem
                 paddings="small"
+                title={t('pages.settings.subInfoNodeEnable')}
+                description={t('pages.settings.subInfoNodeEnableDesc')}
+              >
+                <Switch
+                  checked={allSetting.subInfoNodeEnable}
+                  onChange={(v) => updateSetting({ subInfoNodeEnable: v })}
+                />
+              </SettingListItem>
+
+              <SettingListItem
+                paddings="small"
+                title={t('pages.settings.subCalendarExpireInclusive')}
+                description={t('pages.settings.subCalendarExpireInclusiveDesc')}
+              >
+                <Switch
+                  checked={allSetting.subCalendarExpireInclusive}
+                  onChange={(v) => updateSetting({ subCalendarExpireInclusive: v })}
+                />
+              </SettingListItem>
+
+              <SettingListItem
+                paddings="small"
+                title={t('pages.settings.subExpiredTemplate')}
+                description={t('pages.settings.subExpiredTemplateDesc')}
+              >
+                <RemarkTemplateField
+                  value={allSetting.subExpiredTemplate}
+                  onChange={(v) => updateSetting({ subExpiredTemplate: v })}
+                  maxLength={256}
+                />
+              </SettingListItem>
+
+              <SettingListItem
+                paddings="small"
+                title={t('pages.settings.subTrafficDepletedTemplate')}
+                description={t('pages.settings.subTrafficDepletedTemplateDesc')}
+              >
+                <RemarkTemplateField
+                  value={allSetting.subTrafficDepletedTemplate}
+                  onChange={(v) => updateSetting({ subTrafficDepletedTemplate: v })}
+                  maxLength={256}
+                />
+              </SettingListItem>
+
+              <SettingListItem
+                paddings="small"
                 title={t('pages.settings.subUpdates')}
                 badge={<DefaultSettingTag settingKey="subUpdates" value={allSetting.subUpdates} />}
                 description={t('pages.settings.subUpdatesDesc')}
@@ -229,16 +280,44 @@ export default function SubscriptionGeneralTab({
               </SettingListItem>
               <SettingListItem
                 paddings="small"
-                title={t('pages.settings.subProfileUrl')}
-                description={t('pages.settings.subProfileUrlDesc')}
+                title={t('pages.settings.subProfileMode')}
+                description={t('pages.settings.subProfileModeDesc')}
               >
-                <RemarkTemplateField
-                  value={allSetting.subProfileUrl}
-                  placeholder="https://example.com"
-                  onChange={(v) => updateSetting({ subProfileUrl: v })}
-                  metadataOnly
+                <Select<SubProfileMode>
+                  id="sub-profile-mode"
+                  aria-label={t('pages.settings.subProfileMode')}
+                  value={allSetting.subProfileMode}
+                  style={{ width: '100%' }}
+                  onChange={(value) => updateSetting({ subProfileMode: value })}
+                  options={[
+                    { value: 'none', label: t('pages.settings.subProfileModeNone') },
+                    { value: 'builtin', label: t('pages.settings.subProfileModeBuiltin') },
+                    { value: 'custom', label: t('pages.settings.subProfileModeCustom') },
+                  ]}
                 />
               </SettingListItem>
+              {allSetting.subProfileMode === 'builtin' ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ margin: '12px 20px' }}
+                  title={t('pages.settings.subProfileBuiltinWarning')}
+                />
+              ) : null}
+              {allSetting.subProfileMode === 'custom' ? (
+                <SettingListItem
+                  paddings="small"
+                  title={t('pages.settings.subProfileUrl')}
+                  description={t('pages.settings.subProfileUrlDesc')}
+                >
+                  <RemarkTemplateField
+                    value={allSetting.subProfileUrl}
+                    placeholder="https://example.com"
+                    onChange={(v) => updateSetting({ subProfileUrl: v })}
+                    metadataOnly
+                  />
+                </SettingListItem>
+              ) : null}
               <SettingListItem
                 paddings="small"
                 title={t('pages.settings.subAnnounce')}
@@ -309,40 +388,14 @@ export default function SubscriptionGeneralTab({
           key: '5',
           label: catTabLabel(<BranchesOutlined />, 'Happ', isMobile),
           children: (
-            <>
-              <SettingListItem
-                paddings="small"
-                title={t('pages.settings.subEnableRouting')}
-                description={t('pages.settings.subEnableRoutingDesc')}
-              >
-                <Switch
-                  checked={allSetting.subEnableRouting}
-                  onChange={(v) => updateSetting({ subEnableRouting: v })}
-                />
-              </SettingListItem>
-              <SettingListItem
-                paddings="small"
-                title={t('pages.settings.subRoutingRules')}
-                badge={remoteSourceBadge(allSetting.subRoutingRules)}
-                description={t('pages.settings.subRoutingRulesDesc')}
-              >
-                <Input.TextArea
-                  value={allSetting.subRoutingRules}
-                  placeholder="happ://routing/onadd/... or https://.../DEFAULT.DEEPLINK"
-                  onChange={(e) => updateSetting({ subRoutingRules: e.target.value })}
-                />
-              </SettingListItem>
-              <SettingListItem
-                paddings="small"
-                title={t('pages.settings.subHideSettings')}
-                description={t('pages.settings.subHideSettingsDesc')}
-              >
-                <Switch
-                  checked={allSetting.subHideSettings}
-                  onChange={(v) => updateSetting({ subHideSettings: v })}
-                />
-              </SettingListItem>
-            </>
+            <HappSettingsContent
+              allSetting={allSetting}
+              updateSetting={updateSetting}
+              isMobile={isMobile}
+              remoteSourceBadge={remoteSourceBadge}
+              // QR settings links select the link control; ordinary Happ visits still start on routing.
+              defaultActiveTab={searchParams.get('happTab') === 'links' ? 'links' : 'routing'}
+            />
           ),
         },
         {

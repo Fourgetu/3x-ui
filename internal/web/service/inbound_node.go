@@ -12,6 +12,7 @@ import (
 	"github.com/mhsanaei/3x-ui/v3/internal/database"
 	"github.com/mhsanaei/3x-ui/v3/internal/database/model"
 	"github.com/mhsanaei/3x-ui/v3/internal/logger"
+	"github.com/mhsanaei/3x-ui/v3/internal/util/common"
 	"github.com/mhsanaei/3x-ui/v3/internal/web/runtime"
 	"github.com/mhsanaei/3x-ui/v3/internal/xray"
 
@@ -21,11 +22,25 @@ import (
 
 var reportedRemoteTagConflict sync.Map
 
+var reportedForeignClientClaim sync.Map
+
 // nodeBulkPushThreshold caps how many per-client RPCs a single operation will
 // stream to a remote node. Above it, the panel marks the node dirty instead and
 // lets one ReconcileNode push converge the whole inbound — far cheaper than M
 // sequential round-trips. Small ops stay on the live per-client path.
 const nodeBulkPushThreshold = 32
+
+// nodeClientPushTimeout bounds the synchronous per-client push: the change is
+// committed and the node flagged dirty, so a slow node defers to the reconcile.
+const nodeClientPushTimeout = 4 * time.Second
+
+// nodeFanoutConcurrency bounds an operation that calls every node, as the heartbeat
+// does: one at a time, a few hanging nodes outlast the request's write timeout.
+const nodeFanoutConcurrency = 32
+
+func nodePushContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), nodeClientPushTimeout)
+}
 
 func (s *InboundService) runtimeFor(ib *model.Inbound) (runtime.Runtime, error) {
 	mgr := runtime.GetManager()
@@ -162,7 +177,7 @@ func (s *InboundService) ReconcileNode(ctx context.Context, rt *runtime.Remote, 
 			errs = append(errs, fmt.Errorf("reconcile inbound %q: %w", ib.Tag, err))
 		}
 	}
-	// Before the first clean sync adopts the node's inbounds, "absent locally"
+	// Before the next clean sync adopts the node's inbounds, "absent locally"
 	// means "not imported yet" — sweeping now would wipe the node at onboarding.
 	if n.InboundsAdoptedAt == 0 {
 		return errors.Join(errs...)
@@ -171,13 +186,7 @@ func (s *InboundService) ReconcileNode(ctx context.Context, rt *runtime.Remote, 
 	// rest were never imported, so their absence from the local DB must not
 	// delete them from the node. Only a selected tag missing locally (the
 	// panel deleted it while the node was unreachable) may be swept.
-	var selected map[string]struct{}
-	if n.InboundSyncMode == "selected" {
-		selected = make(map[string]struct{}, len(n.InboundTags))
-		for _, tag := range n.InboundTags {
-			selected[tag] = struct{}{}
-		}
-	}
+	selected := nodeSelectedTagSet(n)
 	for _, tag := range remoteTags {
 		if _, want := desiredTags[tag]; want {
 			continue
@@ -350,6 +359,10 @@ func (s *InboundService) SetRemoteTraffic(nodeID int, snap *runtime.TrafficSnaps
 		structuralChange, inner = s.setRemoteTrafficLocked(nodeID, snap, dirty, justPushed)
 		return inner
 	})
+	if err != nil {
+		// As on a failed fetch: a node whose snapshot did not merge keeps no online set.
+		s.ClearNodeOnlineClients(nodeID)
+	}
 	return structuralChange, err
 }
 
@@ -410,6 +423,46 @@ func adoptedWireInbound(c, snapIb *model.Inbound, adoptedSettings string) *model
 	a.TrafficReset = snapIb.TrafficReset
 	a.TrafficResetDay = normalizeTrafficResetDay(snapIb.TrafficResetDay)
 	return &a
+}
+
+// clientEmailsOwnedElsewhere returns the emails attached only to inbounds of
+// other nodes: email is unique, so adopting one would overwrite a client this
+// node does not serve. Attached nowhere means soft-orphaned, hence adoptable.
+func clientEmailsOwnedElsewhere(tx *gorm.DB, nodeID int, emails []string) (map[string]struct{}, error) {
+	attachedEmails := func(nodeScoped bool) ([]string, error) {
+		q := tx.Table("clients").
+			Joins("JOIN client_inbounds ON client_inbounds.client_id = clients.id").
+			Joins("JOIN inbounds ON inbounds.id = client_inbounds.inbound_id").
+			Where("clients.email IN ?", emails)
+		if nodeScoped {
+			q = q.Where("inbounds.node_id = ?", nodeID)
+		}
+		var rows []string
+		err := q.Pluck("clients.email", &rows).Error
+		return rows, err
+	}
+	attached, err := attachedEmails(false)
+	if err != nil {
+		return nil, err
+	}
+	if len(attached) == 0 {
+		return nil, nil
+	}
+	owned, err := attachedEmails(true)
+	if err != nil {
+		return nil, err
+	}
+	ownedSet := make(map[string]struct{}, len(owned))
+	for _, email := range owned {
+		ownedSet[email] = struct{}{}
+	}
+	foreign := make(map[string]struct{})
+	for _, email := range attached {
+		if _, ok := ownedSet[email]; !ok {
+			foreign[email] = struct{}{}
+		}
+	}
+	return foreign, nil
 }
 
 func (s *InboundService) setRemoteTrafficLocked(nodeID int, snap *runtime.TrafficSnapshot, dirty, justPushed bool) (bool, error) {
@@ -1184,6 +1237,29 @@ func (s *InboundService) setRemoteTrafficLocked(nodeID int, snap *runtime.Traffi
 				}
 			}
 		}
+		if len(localEmails) > 0 {
+			foreign, err := clientEmailsOwnedElsewhere(tx, nodeID, localEmails)
+			if err != nil {
+				return false, err
+			}
+			if len(foreign) > 0 {
+				kept := filtered[:0]
+				for i := range filtered {
+					if _, claimed := foreign[filtered[i].Email]; !claimed {
+						kept = append(kept, filtered[i])
+						continue
+					}
+					key := fmt.Sprintf("%d:%s", nodeID, filtered[i].Email)
+					if _, seen := reportedForeignClientClaim.LoadOrStore(key, struct{}{}); !seen {
+						logger.Warningf(
+							"setRemoteTraffic: node %d reported client %q, which is attached only to inbounds of another node — not adopting (rename one side to remove the duplicate email)",
+							nodeID, filtered[i].Email,
+						)
+					}
+				}
+				filtered = kept
+			}
+		}
 		if err := s.clientService.SyncInbound(tx, c.Id, filtered); err != nil {
 			logger.Warningf("setRemoteTraffic: sync clients for tag %q failed: %v", snapIb.Tag, err)
 			syncFailedInbounds[c.Id] = struct{}{}
@@ -1309,17 +1385,20 @@ func (s *InboundService) restartRemoteNodesOnDisable(nodeIDs []int) {
 	if !restartOnDisable {
 		return
 	}
-	for _, nodeID := range nodeIDs {
-		nodeIDCopy := nodeID
-		rt, rtErr := runtime.GetManager().RuntimeFor(&nodeIDCopy)
-		if rtErr != nil {
-			logger.Warning("disableInvalidClients: get runtime for node", nodeID, "failed:", rtErr)
-			continue
+	// Best-effort and never replayed: a hanging node must not hold the traffic poll.
+	common.GoRecover("restart-nodes-on-client-disable", func() {
+		for _, nodeID := range nodeIDs {
+			nodeIDCopy := nodeID
+			rt, rtErr := runtime.GetManager().RuntimeFor(&nodeIDCopy)
+			if rtErr != nil {
+				logger.Warning("disableInvalidClients: get runtime for node", nodeID, "failed:", rtErr)
+				continue
+			}
+			if rtErr = rt.RestartXray(context.Background()); rtErr != nil {
+				logger.Warning("disableInvalidClients: restart xray on node", nodeID, "failed:", rtErr)
+			}
 		}
-		if rtErr = rt.RestartXray(context.Background()); rtErr != nil {
-			logger.Warning("disableInvalidClients: restart xray on node", nodeID, "failed:", rtErr)
-		}
-	}
+	})
 }
 
 func (s *InboundService) GetOnlineClients() []string {
@@ -1381,6 +1460,20 @@ func (s *InboundService) ClearNodeOnlineClients(nodeID int) {
 	if process := currentXrayProcess(); process != nil {
 		process.ClearNodeOnlineClients(nodeID)
 	}
+}
+
+// RetainSyncedNodeOnlineClients keeps online clients only for nodes the traffic
+// sync still fetches; a node missing from nodes was deleted.
+func (s *InboundService) RetainSyncedNodeOnlineClients(nodes []*model.Node) {
+	process := currentXrayProcess()
+	if process == nil {
+		return
+	}
+	synced := make(map[int]bool, len(nodes))
+	for _, n := range nodes {
+		synced[n.Id] = n.Enable && n.Status == "online"
+	}
+	process.RetainNodeOnlineClients(func(nodeID int) bool { return synced[nodeID] })
 }
 
 // panelGuid returns this panel's stable self-identifier, used to key the local
