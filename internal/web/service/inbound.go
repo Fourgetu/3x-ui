@@ -1458,7 +1458,7 @@ func (s *InboundService) delInbound(id int) (bool, func(), error) {
 		return needRestart, nodePush, err
 	}
 	if err := (&UserSpeedLimitService{}).ReconcileAfterMutation(); err != nil {
-		return needRestart, fmt.Errorf("user speed-limit runtime reconcile after inbound delete: %w", err)
+		return needRestart, nodePush, fmt.Errorf("user speed-limit runtime reconcile after inbound delete: %w", err)
 	}
 	if postCommitApply != nil {
 		postCommitApply()
