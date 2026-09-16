@@ -1184,7 +1184,7 @@ func (s *ClientService) Detach(inboundSvc *InboundService, id int, inboundIds []
 			return nr, delErr
 		}})
 	}
-	needRestart, err = fanoutInboundApplies(applies)
+	needRestart, err := fanoutInboundApplies(applies)
 	if err != nil {
 		return needRestart, err
 	}
