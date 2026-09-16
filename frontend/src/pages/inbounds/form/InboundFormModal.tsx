@@ -251,6 +251,7 @@ export default function InboundFormModal({
   const [recommendOpen, setRecommendOpen] = useState(true);
   const [selectedPresetId, setSelectedPresetId] = useState<PresetId | null>(null);
   const [presetDomain, setPresetDomain] = useState('');
+  const presetGenerationRef = useRef(0);
   const {
     fallbacks,
     fallbackChildOptions,
@@ -380,13 +381,19 @@ export default function InboundFormModal({
     return { certFile, keyFile, domain };
   };
 
-  const fetchRealityKeypair = async (): Promise<{ privateKey: string; publicKey: string } | null> => {
-    const msg = await HttpUtil.get('/panel/api/server/getNewX25519Cert', undefined, { silent: true });
+  const fetchRealityKeypair = async (): Promise<{
+    privateKey: string;
+    publicKey: string;
+  } | null> => {
+    const msg = await HttpUtil.get('/panel/api/server/getNewX25519Cert', undefined, {
+      silent: true,
+    });
     if (!msg?.success || !msg.obj) return null;
     return msg.obj as { privateKey: string; publicKey: string };
   };
 
   const applyPreset = async (preset: InboundPreset) => {
+    const generation = ++presetGenerationRef.current;
     setSaving(true);
     try {
       const keepNodeId = (getV('nodeId') as number | null | undefined) ?? null;
@@ -411,6 +418,10 @@ export default function InboundFormModal({
         secrets.domain = domain;
       }
       applyPresetSecrets(row, secrets);
+      // A preset request can overlap with manual editing (especially the
+      // initial recommended preset, which needs several API calls). Never let
+      // a stale response reset values that the operator has already changed.
+      if (generation !== presetGenerationRef.current) return;
       const values = rawInboundToFormValues(row);
       values.nodeId = keepNodeId;
       methods.reset(values);
@@ -432,9 +443,7 @@ export default function InboundFormModal({
       const commonSubId = await fetchCommonSubId();
       const targets = INBOUND_PRESETS.filter((preset) => !preset.needsDomain || hasCertificate);
       const usedPorts = new Set(
-        dbInbounds
-          .filter((row) => (row.nodeId ?? null) === targetNodeId)
-          .map((row) => row.port),
+        dbInbounds.filter((row) => (row.nodeId ?? null) === targetNodeId).map((row) => row.port),
       );
       let created = 0;
       const failed: string[] = [];
@@ -619,11 +628,6 @@ export default function InboundFormModal({
       loadFallbacks(null);
     }
 
-    if (mode === 'add') {
-      const recommended = INBOUND_PRESETS.find((preset) => preset.recommended) ?? INBOUND_PRESETS[0];
-      if (recommended) void applyPreset(recommended);
-    }
-
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [open, mode, dbInbound, methods]);
 
@@ -779,6 +783,7 @@ export default function InboundFormModal({
   const simpleMode = mode === 'add' && recommendOpen;
 
   const onPresetDomainChange = (value: string) => {
+    presetGenerationRef.current += 1;
     setPresetDomain(value);
     setV('streamSettings.tlsSettings.serverName', value.trim());
   };
@@ -885,11 +890,9 @@ export default function InboundFormModal({
         </FormField>
       )}
 
-      {!simpleMode && (
-        <FormField name="protocol" label={t('pages.inbounds.protocol')}>
-          <Select id="protocol" disabled={mode === 'edit'} options={PROTOCOL_OPTIONS} />
-        </FormField>
-      )}
+      <FormField name="protocol" label={t('pages.inbounds.protocol')}>
+        <Select id="protocol" disabled={mode === 'edit'} options={PROTOCOL_OPTIONS} />
+      </FormField>
 
       {!simpleMode && (
         <FormField
@@ -1359,7 +1362,10 @@ export default function InboundFormModal({
         confirmLoading={saving}
         mask={{ closable: false }}
         width={780}
-        onOk={submit}
+        onOk={() => {
+          presetGenerationRef.current += 1;
+          return submit();
+        }}
         onCancel={onClose}
         destroyOnHidden
       >
@@ -1410,20 +1416,20 @@ export default function InboundFormModal({
                   children: basicTab,
                   forceRender: true,
                 },
-                ...(!simpleMode &&
-                (([
-                  Protocols.VLESS,
-                  Protocols.SHADOWSOCKS,
-                  Protocols.HTTP,
-                  Protocols.MIXED,
-                  Protocols.TUNNEL,
-                  Protocols.TUN,
-                  Protocols.WIREGUARD,
-                  Protocols.MTPROTO,
-                  Protocols.AMNEZIAWG,
-                  Protocols.TUIC,
-                ] as string[]).includes(protocol) ||
-                  isFallbackHost)
+                ...((
+                  [
+                    Protocols.VLESS,
+                    Protocols.SHADOWSOCKS,
+                    Protocols.HTTP,
+                    Protocols.MIXED,
+                    Protocols.TUNNEL,
+                    Protocols.TUN,
+                    Protocols.WIREGUARD,
+                    Protocols.MTPROTO,
+                    Protocols.AMNEZIAWG,
+                    Protocols.TUIC,
+                  ] as string[]
+                ).includes(protocol) || isFallbackHost
                   ? [
                       {
                         key: 'protocol',
@@ -1433,7 +1439,7 @@ export default function InboundFormModal({
                       },
                     ]
                   : []),
-                ...(!simpleMode && streamEnabled
+                ...(streamEnabled
                   ? [
                       {
                         key: 'stream',

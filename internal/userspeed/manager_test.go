@@ -15,8 +15,10 @@ import (
 )
 
 func TestCandidatePathKeepsJSONExtension(t *testing.T) {
-	path := CandidatePath("/var/lib/x-ui/gost/config.json", "tmp-12-34")
-	if got, want := path, "/var/lib/x-ui/gost/config.tmp-12-34.json"; got != want {
+	root := t.TempDir()
+	path := CandidatePath(filepath.Join(root, "gost", "config.json"), "tmp-12-34")
+	want := filepath.Join(root, "gost", "config.tmp-12-34.json")
+	if got := path; got != want {
 		t.Fatalf("CandidatePath() = %q, want %q", got, want)
 	}
 	if filepath.Ext(CandidatePath("config.json", "known-good")) != ".json" {

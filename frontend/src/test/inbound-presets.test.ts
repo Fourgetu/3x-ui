@@ -7,16 +7,24 @@ import { INBOUND_PRESETS, applyPresetSecrets, getPreset } from '@/lib/xray/inbou
 import { InboundFormSchema } from '@/schemas/forms/inbound-form';
 import type { Inbound } from '@/schemas/api/inbound';
 
-// Every preset must produce a row that, once mapped to InboundFormValues,
-// passes InboundFormSchema — the exact gate the modal's submit() runs before
-// POSTing. If a preset ever drifts out of schema shape this fails loudly
-// instead of silently rejecting the operator's one-click create.
+// Every preset must produce a row that, once its runtime secrets are applied,
+// maps to InboundFormValues and passes InboundFormSchema — the exact gate the
+// modal's submit() runs before POSTing. TLS/QUIC presets intentionally leave
+// certificate paths empty until the modal reads the panel or node settings.
 
 describe('inbound presets', () => {
   for (const preset of INBOUND_PRESETS) {
     it(`${preset.id} builds a schema-valid inbound`, () => {
       const domain = preset.needsDomain ? 'example.com' : undefined;
-      const values = rawInboundToFormValues(preset.build(domain));
+      const row = preset.build(domain);
+      if (preset.needsDomain) {
+        applyPresetSecrets(row, {
+          certFile: '/root/cert/example.com/fullchain.pem',
+          keyFile: '/root/cert/example.com/privkey.pem',
+          domain,
+        });
+      }
+      const values = rawInboundToFormValues(row);
       const parsed = InboundFormSchema.safeParse(values);
       if (!parsed.success) {
         throw new Error(`${preset.id} failed: ${JSON.stringify(parsed.error.issues, null, 2)}`);
@@ -81,10 +89,19 @@ describe('inbound presets', () => {
 
   it('applyPresetSecrets injects panel cert + domain for a TLS preset', () => {
     const row = getPreset('trojan-tls')!.build();
-    applyPresetSecrets(row, { certFile: '/c/fullchain.pem', keyFile: '/c/privkey.pem', domain: 'my.host' });
-    const tls = (row.streamSettings as { tlsSettings: {
-      serverName: string; certificates: { certificateFile: string; keyFile: string }[];
-    } }).tlsSettings;
+    applyPresetSecrets(row, {
+      certFile: '/c/fullchain.pem',
+      keyFile: '/c/privkey.pem',
+      domain: 'my.host',
+    });
+    const tls = (
+      row.streamSettings as {
+        tlsSettings: {
+          serverName: string;
+          certificates: { certificateFile: string; keyFile: string }[];
+        };
+      }
+    ).tlsSettings;
     expect(tls.serverName).toBe('my.host');
     expect(tls.certificates[0].certificateFile).toBe('/c/fullchain.pem');
     expect(tls.certificates[0].keyFile).toBe('/c/privkey.pem');
@@ -124,4 +141,3 @@ describe('inbound presets', () => {
     });
   }
 });
-

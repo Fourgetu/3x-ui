@@ -2956,6 +2956,12 @@
           "shareAddrStrategy": {
             "type": "string"
           },
+          "speedLimitSupported": {
+            "type": "boolean"
+          },
+          "speedLimitUnsupportedReason": {
+            "type": "string"
+          },
           "ssMethod": {
             "type": "string"
           },
@@ -2991,6 +2997,7 @@
           "port",
           "protocol",
           "remark",
+          "speedLimitSupported",
           "ssMethod",
           "tag",
           "tlsFlowCapable"
@@ -4795,6 +4802,8 @@
                       "security": "",
                       "shareAddr": "",
                       "shareAddrStrategy": "",
+                      "speedLimitSupported": false,
+                      "speedLimitUnsupportedReason": "",
                       "ssMethod": "",
                       "tag": "in-443-tcp",
                       "tlsFlowCapable": true,
@@ -8313,7 +8322,31 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "inboundId": {
+                    "type": "integer",
+                    "description": "Attached inbound ID."
+                  },
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Enable the identity-bound route."
+                  },
+                  "uploadMbps": {
+                    "type": "integer",
+                    "description": "Upload rate in Mbps, 0 = unlimited."
+                  },
+                  "downloadMbps": {
+                    "type": "integer",
+                    "description": "Download rate in Mbps, 0 = unlimited."
+                  }
+                },
+                "required": [
+                  "inboundId",
+                  "enabled",
+                  "uploadMbps",
+                  "downloadMbps"
+                ]
               },
               "example": {
                 "inboundId": 3,

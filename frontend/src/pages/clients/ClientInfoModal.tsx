@@ -534,10 +534,16 @@ export default function ClientInfoModal({
                         const ib = inboundsById[id];
                         const proto = (ib?.protocol || '').toLowerCase();
                         const color = INBOUND_PROTOCOL_COLORS[proto] ?? 'default';
-                        const label = formatInboundLabel(ib?.tag, ib?.remark, ib?.port);
+                        const label = formatInboundLabel(ib?.tag, ib?.remark);
+                        const labelWithPort = formatInboundLabel(ib?.tag, ib?.remark, ib?.port);
                         return (
-                          <Tooltip key={id} title={label}>
-                            <Tag color={color}>{label}</Tag>
+                          <Tooltip key={id} title={labelWithPort}>
+                            <Tag color={color}>
+                              <span>{label}</span>
+                              {ib?.port ? (
+                                <span className="inbound-chip-port"> : {ib.port}</span>
+                              ) : null}
+                            </Tag>
                           </Tooltip>
                         );
                       };

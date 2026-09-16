@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 // The #6121/#6127 guard is hand-written JS walking oxlint's AST, so it can go
@@ -8,8 +9,12 @@ const FIXTURES = 'tools/oxlint/__fixtures__';
 const RULE = 'input-number(no-synthetic-clear)';
 
 function runGuard(target: string): string {
+  const oxlint =
+    process.platform === 'win32' ? process.execPath : resolve('node_modules/.bin/oxlint');
+  const oxlintArgs =
+    process.platform === 'win32' ? [resolve('node_modules/oxlint/bin/oxlint')] : [];
   try {
-    execFileSync('./node_modules/.bin/oxlint', ['-c', `${FIXTURES}/guard.oxlintrc.json`, target], {
+    execFileSync(oxlint, [...oxlintArgs, '-c', `${FIXTURES}/guard.oxlintrc.json`, target], {
       encoding: 'utf8',
       stdio: 'pipe',
     });
