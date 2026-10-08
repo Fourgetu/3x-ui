@@ -148,11 +148,28 @@ update() {
         fi
         return 0
     fi
-    bash <(curl -Ls https://raw.githubusercontent.com/Fourgetu/3x-ui/main/update.sh)
-    if [[ $? == 0 ]]; then
+    local update_tag update_url
+    update_tag=$(curl -fsSL --retry 3 --connect-timeout 15 --max-time 60 https://api.github.com/repos/Fourgetu/3x-ui/releases/latest | sed -nE 's/.*"tag_name": *"([^"]+)".*/\1/p' | head -n1)
+    if [[ ! "$update_tag" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-fourgetu\.[0-9]+)?$ ]]; then
+        LOGE "Failed to resolve the latest Fourgetu release"
+        return 1
+    fi
+    update_url="https://raw.githubusercontent.com/Fourgetu/3x-ui/${update_tag}/update.sh"
+    local update_script update_result
+    update_script=$(mktemp) || return 1
+    if ! curl -fLs --retry 3 --connect-timeout 15 --max-time 60 -o "$update_script" "$update_url"; then
+        rm -f "$update_script"
+        LOGE "Failed to download the Fourgetu updater"
+        return 1
+    fi
+    XUI_UPDATE_TAG="$update_tag" bash "$update_script"
+    update_result=$?
+    rm -f "$update_script"
+    if [[ $update_result == 0 ]]; then
         LOGI "Update is complete, Panel has automatically restarted "
         before_show_menu
     fi
+    return "$update_result"
 }
 
 update_dev() {
@@ -213,7 +230,7 @@ replace_xui_script() {
 installed_script_url() {
     local ver
     ver=$("${xui_folder}/x-ui" -v 2> /dev/null | tr -d '[:space:]')
-    if [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && curl -fsIL -o /dev/null "https://raw.githubusercontent.com/Fourgetu/3x-ui/v${ver}/x-ui.sh"; then
+    if [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-fourgetu\.[0-9]+)?$ ]] && curl -fsIL -o /dev/null "https://raw.githubusercontent.com/Fourgetu/3x-ui/v${ver}/x-ui.sh"; then
         echo "https://raw.githubusercontent.com/Fourgetu/3x-ui/v${ver}/x-ui.sh"
     else
         echo -e "${yellow}No x-ui.sh published for the installed version (${ver:-unknown}), using main${plain}" >&2
@@ -897,7 +914,8 @@ check_status() {
         if [[ ! -f ${xui_service}/x-ui.service ]]; then
             return 2
         fi
-        temp=$(systemctl status x-ui | grep Active | awk '{print $3}' | cut -d "(" -f2 | cut -d ")" -f1)
+        temp=$(systemctl show --property=SubState x-ui)
+        temp=${temp#SubState=}
         if [[ "${temp}" == "running" ]]; then
             return 0
         else
@@ -2317,7 +2335,17 @@ setup_fail2ban_iplimit() {
             centos)
                 if [[ "${VERSION_ID}" =~ ^7 ]]; then
                     yum makecache -y && yum install epel-release -y
+                    # On EL7 fail2ban pulls in firewalld, which is enabled on the
+                    # next boot and blocks every panel/inbound port. The IP Limit
+                    # jail uses raw iptables, so a firewalld that was not there
+                    # before is not needed: keep it from starting on reboot.
+                    rpm -q firewalld &> /dev/null && had_firewalld=1 || had_firewalld=0
                     yum -y install fail2ban nftables
+                    if [[ "${had_firewalld}" == "0" ]] && rpm -q firewalld &> /dev/null; then
+                        systemctl disable firewalld 2> /dev/null
+                        echo -e "${yellow}firewalld was pulled in by fail2ban and has been disabled so it does not block your ports after a reboot.${plain}
+"
+                    fi
                 else
                     dnf makecache -y && dnf -y install fail2ban nftables
                 fi

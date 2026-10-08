@@ -141,14 +141,29 @@ function manualLandingSettings(input: LandingManualInput): unknown {
   const { protocol, address, port } = input;
   switch (protocol) {
     case 'vless':
-      return { address, port, id: (input.id ?? '').trim(), flow: input.flow ?? '', encryption: 'none' };
+      return {
+        address,
+        port,
+        id: (input.id ?? '').trim(),
+        flow: input.flow ?? '',
+        encryption: 'none',
+      };
     case 'vmess':
-      return { vnext: [{ address, port, users: [{ id: (input.id ?? '').trim(), security: 'auto' }] }] };
+      return {
+        vnext: [{ address, port, users: [{ id: (input.id ?? '').trim(), security: 'auto' }] }],
+      };
     case 'trojan':
       return { servers: [{ address, port, password: input.password ?? '' }] };
     case 'shadowsocks':
       return {
-        servers: [{ address, port, password: input.password ?? '', method: input.method ?? '2022-blake3-aes-256-gcm' }],
+        servers: [
+          {
+            address,
+            port,
+            password: input.password ?? '',
+            method: input.method ?? '2022-blake3-aes-256-gcm',
+          },
+        ],
       };
     case 'socks':
       return { servers: [{ address, port, users: socksHttpUsers(input.user, input.pass) }] };
@@ -266,4 +281,3 @@ export function applyRelayToTemplate(
     routing: { ...prevRouting, rules },
   } as XraySettingsValue;
 }
-

@@ -24,7 +24,11 @@ import { Controller, FormProvider, useForm, useWatch } from 'react-hook-form';
 
 import { HttpUtil, NumberFormatter, RandomUtil, SizeFormatter, Wireguard } from '@/utils';
 import type { RealityScanResult } from '@/generated/types';
-import { rawInboundToFormValues, formValuesToWirePayload } from '@/lib/xray/inbound-form-adapter';
+import {
+  rawInboundToFormValues,
+  formValuesToWirePayload,
+  withoutClients,
+} from '@/lib/xray/inbound-form-adapter';
 import { createDefaultInboundSettings } from '@/lib/xray/inbound-defaults';
 import { generateAwgObfuscation } from '@/lib/xray/amneziawg-obfuscation';
 import {
@@ -602,7 +606,9 @@ export default function InboundFormModal({
   useEffect(() => {
     if (!open) return;
     const initial =
-      mode === 'edit' && dbInbound ? rawInboundToFormValues(dbInbound) : buildAddModeValues();
+      mode === 'edit' && dbInbound
+        ? withoutClients(rawInboundToFormValues(dbInbound))
+        : buildAddModeValues();
     methods.reset(initial);
     setRecommendOpen(mode === 'add');
     setSelectedPresetId(null);
@@ -722,13 +728,8 @@ export default function InboundFormModal({
   }, [mode, methods]);
 
   const saveValues = async () => {
-    /*
-     * getValues() returns the entire form store, including settings.clients and
-     * settings.fallbacks which have no bound field (clients are managed via the
-     * standalone Client modal, not this inbound modal). With shouldUnregister
-     * false those pass-through sub-trees survive from the reset object, so the
-     * update wire payload never silently drops every client on save.
-     */
+    // settings.fallbacks has no bound field; shouldUnregister=false keeps it from
+    // the reset object. An edit sends no clients: the server keeps the stored ones.
     const values = methods.getValues() as InboundFormValues;
     const parsed = InboundFormSchema.safeParse(values);
     if (!parsed.success) {
@@ -743,7 +744,7 @@ export default function InboundFormModal({
     }
     setSaving(true);
     try {
-      const payload = formValuesToWirePayload(parsed.data);
+      const payload = formValuesToWirePayload(parsed.data, { omitClients: mode === 'edit' });
       const url =
         mode === 'edit' && dbInbound
           ? `/panel/api/inbounds/update/${dbInbound.id}`
@@ -862,9 +863,9 @@ export default function InboundFormModal({
     <>
       {presetGallery}
 
-      {!simpleMode && (
+      {mode === 'add' && (
         <FormField name="enable" label={t('enable')} valueProp="checked">
-          <Switch />
+          <Switch id="inbound-enable" />
         </FormField>
       )}
 
@@ -952,6 +953,17 @@ export default function InboundFormModal({
           <InputNumber min={1} />
         </FormField>
       )}
+
+      <FormField
+        name="excludeFromSub"
+        valueProp="checked"
+        label={labelWithHint(
+          t('pages.inbounds.form.excludeFromSub'),
+          t('pages.inbounds.form.excludeFromSubHelp'),
+        )}
+      >
+        <Switch />
+      </FormField>
 
       {!simpleMode && protocol === Protocols.VLESS && (
         <FormField

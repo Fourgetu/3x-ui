@@ -13,6 +13,7 @@ export const EXAMPLES: Record<string, unknown> = {
     "discordMemory": 0,
     "discordRunTime": "",
     "expireDiff": 0,
+    "externalSubUserAgent": "",
     "externalTrafficInformEnable": false,
     "externalTrafficInformURI": "",
     "happLinkEnable": false,
@@ -80,6 +81,7 @@ export const EXAMPLES: Record<string, unknown> = {
     "subHappExcludeApns": false,
     "subHappExcludeRoutes": "",
     "subHappFallbackUrl": "",
+    "subHappLocalProxyAuth": "",
     "subHappNewUrl": "",
     "subHappNoLimit": false,
     "subHappNotificationExpire": false,
@@ -96,8 +98,36 @@ export const EXAMPLES: Record<string, unknown> = {
     "subHappTunMode": "",
     "subHappTunType": "",
     "subHideSettings": false,
+    "subIncyAnnounceUrl": "",
+    "subIncyAppAutoDetect": false,
+    "subIncyBannerBgColor": "",
+    "subIncyBannerButtonColor": "",
+    "subIncyBannerButtonText": "",
+    "subIncyBannerButtonUrl": "",
+    "subIncyBannerText": "",
     "subIncyEnableRouting": false,
+    "subIncyFragmentInterval": "",
+    "subIncyFragmentLength": "",
+    "subIncyFragmentPackets": "",
+    "subIncyFragmentationEnable": "",
+    "subIncyHideCheck": "",
+    "subIncyHideUrl": "",
+    "subIncyNoLimitEnabled": "",
+    "subIncyNoisesDelay": "",
+    "subIncyNoisesEnable": "",
+    "subIncyNoisesPacket": "",
+    "subIncyNoisesType": "",
+    "subIncyPerAppEnable": "",
+    "subIncyPerAppList": "",
+    "subIncyPerAppMode": "",
+    "subIncyPremiumUrl": "",
+    "subIncyProfileDescription": "",
+    "subIncyResolveDnsDomain": "",
+    "subIncyResolveDnsIp": "",
+    "subIncyResolveEnable": "",
     "subIncyRoutingRules": "",
+    "subIncySortOrder": "",
+    "subIncySupportEmail": "",
     "subInfoNodeEnable": false,
     "subJsonAlwaysArray": false,
     "subJsonAutoDetect": false,
@@ -162,6 +192,7 @@ export const EXAMPLES: Record<string, unknown> = {
     "discordMemory": 0,
     "discordRunTime": "",
     "expireDiff": 0,
+    "externalSubUserAgent": "",
     "externalTrafficInformEnable": false,
     "externalTrafficInformURI": "",
     "happLinkEnable": false,
@@ -237,6 +268,7 @@ export const EXAMPLES: Record<string, unknown> = {
     "subHappExcludeApns": false,
     "subHappExcludeRoutes": "",
     "subHappFallbackUrl": "",
+    "subHappLocalProxyAuth": "",
     "subHappNewUrl": "",
     "subHappNoLimit": false,
     "subHappNotificationExpire": false,
@@ -253,8 +285,36 @@ export const EXAMPLES: Record<string, unknown> = {
     "subHappTunMode": "",
     "subHappTunType": "",
     "subHideSettings": false,
+    "subIncyAnnounceUrl": "",
+    "subIncyAppAutoDetect": false,
+    "subIncyBannerBgColor": "",
+    "subIncyBannerButtonColor": "",
+    "subIncyBannerButtonText": "",
+    "subIncyBannerButtonUrl": "",
+    "subIncyBannerText": "",
     "subIncyEnableRouting": false,
+    "subIncyFragmentInterval": "",
+    "subIncyFragmentLength": "",
+    "subIncyFragmentPackets": "",
+    "subIncyFragmentationEnable": "",
+    "subIncyHideCheck": "",
+    "subIncyHideUrl": "",
+    "subIncyNoLimitEnabled": "",
+    "subIncyNoisesDelay": "",
+    "subIncyNoisesEnable": "",
+    "subIncyNoisesPacket": "",
+    "subIncyNoisesType": "",
+    "subIncyPerAppEnable": "",
+    "subIncyPerAppList": "",
+    "subIncyPerAppMode": "",
+    "subIncyPremiumUrl": "",
+    "subIncyProfileDescription": "",
+    "subIncyResolveDnsDomain": "",
+    "subIncyResolveDnsIp": "",
+    "subIncyResolveEnable": "",
     "subIncyRoutingRules": "",
+    "subIncySortOrder": "",
+    "subIncySupportEmail": "",
     "subInfoNodeEnable": false,
     "subJsonAlwaysArray": false,
     "subJsonAutoDetect": false,
@@ -369,6 +429,7 @@ export const EXAMPLES: Record<string, unknown> = {
     "reset": 0,
     "resetDay": 0,
     "resetMax": 0,
+    "resetWeekday": 0,
     "reverse": null,
     "secret": "ee1234567890abcdef1234567890abcd7777772e636c6f7564666c6172652e636f6d",
     "security": "",
@@ -408,6 +469,20 @@ export const EXAMPLES: Record<string, unknown> = {
         "reset": 0,
         "resetDay": 0,
         "resetMax": 0,
+        "resetWeekday": 0,
+        "speedLimits": [
+          {
+            "createdAt": 0,
+            "downloadMbps": 0,
+            "enabled": false,
+            "externalPort": null,
+            "inboundId": 0,
+            "internalPort": null,
+            "lastError": "",
+            "updatedAt": 0,
+            "uploadMbps": 0
+          }
+        ],
         "subId": "abcd1234",
         "totalGB": 53687091200,
         "traffic": null,
@@ -457,6 +532,7 @@ export const EXAMPLES: Record<string, unknown> = {
     "reset": 0,
     "resetDay": 0,
     "resetMax": 0,
+    "resetWeekday": 0,
     "reverse": null,
     "secret": "",
     "security": "",
@@ -467,6 +543,25 @@ export const EXAMPLES: Record<string, unknown> = {
     "trafficResetDay": 0,
     "updatedAt": 0,
     "uuid": ""
+  },
+  "ClientRenewalPreview": {
+    "canRenew": true,
+    "delayedStart": false,
+    "nextExpiry": "2030-02-01T00:00:00Z",
+    "renewAt": "2030-01-01T00:00:00Z",
+    "renewals": 1,
+    "suggestedExpiry": "2030-01-01T00:00:00Z",
+    "suggestedExpiryTime": 1893456000000,
+    "timeZone": "UTC",
+    "validThrough": "2029-12-31T23:59:59Z"
+  },
+  "ClientRenewalPreviewRequest": {
+    "expiryTime": 1893456000000,
+    "reset": 0,
+    "resetCount": 0,
+    "resetDay": 1,
+    "resetMax": 0,
+    "resetWeekday": 0
   },
   "ClientReverse": {
     "tag": ""
@@ -487,10 +582,55 @@ export const EXAMPLES: Record<string, unknown> = {
     "reset": 0,
     "resetDay": 0,
     "resetMax": 0,
+    "resetWeekday": 0,
+    "speedLimits": [
+      {
+        "createdAt": 0,
+        "downloadMbps": 0,
+        "enabled": false,
+        "externalPort": null,
+        "inboundId": 0,
+        "internalPort": null,
+        "lastError": "",
+        "updatedAt": 0,
+        "uploadMbps": 0
+      }
+    ],
     "subId": "abcd1234",
     "totalGB": 53687091200,
     "traffic": null,
     "updatedAt": 1735100000000
+  },
+  "ClientSpeedLimit": {
+    "createdAt": 0,
+    "downloadMbps": 0,
+    "enabled": false,
+    "externalPort": null,
+    "inboundId": 0,
+    "internalPort": null,
+    "lastError": "",
+    "updatedAt": 0,
+    "uploadMbps": 0
+  },
+  "ClientSpeedLimitUpdate": {
+    "downloadMbps": 0,
+    "enabled": false,
+    "inboundId": 1,
+    "uploadMbps": 0
+  },
+  "ClientSpeedLimitView": {
+    "downloadMbps": 0,
+    "enabled": false,
+    "externalPort": null,
+    "inboundId": 0,
+    "inboundRemark": "",
+    "internalPort": null,
+    "lastError": "",
+    "protocol": "",
+    "runtimeStatus": "",
+    "supported": false,
+    "unsupportedReason": "",
+    "uploadMbps": 0
   },
   "ClientTraffic": {
     "down": 2097152,
@@ -505,6 +645,7 @@ export const EXAMPLES: Record<string, unknown> = {
     "resetCount": 0,
     "resetDay": 0,
     "resetMax": 0,
+    "resetWeekday": 0,
     "subId": "i7tvdpeffi0hvvf1",
     "total": 10737418240,
     "up": 1048576,
@@ -591,6 +732,7 @@ export const EXAMPLES: Record<string, unknown> = {
     "alpn": [
       ""
     ],
+    "cipherSuites": "",
     "createdAt": 0,
     "echConfigList": "",
     "excludeFromSubTypes": [
@@ -636,6 +778,7 @@ export const EXAMPLES: Record<string, unknown> = {
     "alpn": [
       ""
     ],
+    "cipherSuites": "",
     "echConfigList": "",
     "excludeFromSubTypes": [
       ""
@@ -700,6 +843,7 @@ export const EXAMPLES: Record<string, unknown> = {
         "resetCount": 0,
         "resetDay": 0,
         "resetMax": 0,
+        "resetWeekday": 0,
         "subId": "i7tvdpeffi0hvvf1",
         "total": 10737418240,
         "up": 1048576,
@@ -709,6 +853,7 @@ export const EXAMPLES: Record<string, unknown> = {
     "disableFlow": false,
     "down": 0,
     "enable": true,
+    "excludeFromSub": false,
     "expiryTime": 0,
     "fallbackParent": null,
     "id": 1,
@@ -1018,6 +1163,39 @@ export const EXAMPLES: Record<string, unknown> = {
     "id": 0,
     "key": "",
     "value": ""
+  },
+  "Sponsor": {
+    "enable": true,
+    "from": "2026-10-01T00:00:00Z",
+    "id": "acme-2026-10",
+    "link": "https://acme.example/?utm_source=3x-ui",
+    "logo": "/sponsors/logo/acme.png",
+    "name": "Acme VPS",
+    "slots": [
+      ""
+    ],
+    "text": {},
+    "title": {},
+    "until": "2026-11-01T00:00:00Z"
+  },
+  "SponsorList": {
+    "contact": "https://t.me/example",
+    "sponsors": [
+      {
+        "enable": true,
+        "from": "2026-10-01T00:00:00Z",
+        "id": "acme-2026-10",
+        "link": "https://acme.example/?utm_source=3x-ui",
+        "logo": "/sponsors/logo/acme.png",
+        "name": "Acme VPS",
+        "slots": [
+          ""
+        ],
+        "text": {},
+        "title": {},
+        "until": "2026-11-01T00:00:00Z"
+      }
+    ]
   },
   "SubBalancer": {
     "createdAt": 1710000000000,

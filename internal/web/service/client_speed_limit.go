@@ -40,7 +40,7 @@ type ClientSpeedLimitView struct {
 }
 
 type ClientSpeedLimitUpdate struct {
-	InboundID    int  `json:"inboundId" validate:"required,gt=0"`
+	InboundID    int  `json:"inboundId" validate:"required,gt=0" example:"1"`
 	Enabled      bool `json:"enabled"`
 	UploadMbps   int  `json:"uploadMbps" validate:"gte=0,lte=100000"`
 	DownloadMbps int  `json:"downloadMbps" validate:"gte=0,lte=100000"`

@@ -21,4 +21,3 @@ export function getRandomRealityTarget(): RealityTarget {
     sni: selected.sni,
   };
 }
-

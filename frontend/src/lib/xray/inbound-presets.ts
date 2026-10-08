@@ -57,7 +57,10 @@ function randomPort(): number {
 }
 
 function csvToList(value: string): string[] {
-  return value.split(',').map((s) => s.trim()).filter(Boolean);
+  return value
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 // A Reality stream block seeded with a random camouflage target, fresh
@@ -70,11 +73,17 @@ function realityStream(network: 'tcp' | 'grpc'): Record<string, unknown> {
   reality.serverNames = csvToList(tgt.sni);
   reality.shortIds = csvToList(RandomUtil.randomShortIds());
 
-  const stream: Record<string, unknown> = { network, security: 'reality', realitySettings: reality };
+  const stream: Record<string, unknown> = {
+    network,
+    security: 'reality',
+    realitySettings: reality,
+  };
   if (network === 'tcp') {
     stream.tcpSettings = TcpStreamSettingsSchema.parse({ header: { type: 'none' } });
   } else {
-    stream.grpcSettings = GrpcStreamSettingsSchema.parse({ serviceName: RandomUtil.randomLowerAndNum(8) });
+    stream.grpcSettings = GrpcStreamSettingsSchema.parse({
+      serviceName: RandomUtil.randomLowerAndNum(8),
+    });
   }
   return stream;
 }
@@ -194,7 +203,10 @@ export const INBOUND_PRESETS: readonly InboundPreset[] = [
         port: randomPort(),
         settings,
         streamSettings: tlsStream(
-          { network: 'tcp', tcpSettings: TcpStreamSettingsSchema.parse({ header: { type: 'none' } }) },
+          {
+            network: 'tcp',
+            tcpSettings: TcpStreamSettingsSchema.parse({ header: { type: 'none' } }),
+          },
           domain,
         ),
       };
@@ -306,4 +318,3 @@ export const PRESET_FALLBACK: Record<PresetId, { title: string; desc: string }> 
     desc: '可走 CDN 中转 · 需域名与证书',
   },
 };
-

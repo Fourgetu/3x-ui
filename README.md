@@ -23,6 +23,13 @@
 
 ## 本分支新增功能
 
+### 用户级上传 / 下载限速
+
+- 对每个客户端在每个入站上分别设置上传、下载 Mbps，保持原有身份绑定和 GOST 转发实现。
+- 支持本机 VLESS、VMess、Trojan 的 TCP/WS/gRPC/HTTPUpgrade/XHTTP 等传输，以及 Shadowsocks TCP/UDP；远程入站需在实际承载该入站的面板设置。
+- 订阅自动使用该客户端的专属限速端口，保留故障恢复、状态展示、删除/解绑后的端口与进程回收。
+- 官方 v3.9.0 尚无对应的用户级限速实现，因此继续保留本分支功能。
+
 ### 一键推荐协议模板
 
 在“添加入站”窗口中可以直接选择推荐协议模板，自动填充一套完整配置：
@@ -112,7 +119,9 @@ Every release asset is published with a `.sha256` sum next to it. Both `install.
 
 For full documentation — installation, configuration, operations, and the complete API reference — visit **[docs.sanaei.dev](https://docs.sanaei.dev)**.
 
-当前同步基线为官方 `v3.8.5`；本分支发布版本会使用 `v3.8.5-fourgetu.*` 标签。
+当前源码已同步官方 `v3.9.0`，候选版本为 `v3.9.0-fourgetu.1`，尚未发布。本页固定版本安装示例仍指向已有发布的 `v3.8.5-fourgetu.1`；安装命令不会安装尚未发布的本地代码。
+
+兼容处理和验证结果见 [v3.9.0 同步记录](docs/upstream-v3.9.0-sync.md)。构建要求：Go 1.27.1、Node 26 / npm 11、CGO C 编译器；Xray 使用官方 v26.9.30。
 
 ## 支持的平台
 

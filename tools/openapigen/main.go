@@ -36,6 +36,7 @@ func run(root, outDir string) error {
 				"ClientReverse",
 				"Client",
 				"ClientRecord",
+				"ClientSpeedLimit",
 				"ClientInbound",
 				"InboundFallback",
 				"Host",
@@ -93,6 +94,10 @@ func run(root, outDir string) error {
 				"InboundOption",
 				"HappLinkResult",
 				"ClientSlim",
+				"ClientSpeedLimitView",
+				"ClientSpeedLimitUpdate",
+				"ClientRenewalPreviewRequest",
+				"ClientRenewalPreview",
 				"ClientPageResponse",
 				"ClientsSummary",
 				"InboundTrafficSummary",
@@ -112,7 +117,7 @@ func run(root, outDir string) error {
 		},
 		{
 			Path:        resolveRel(root, "internal/web/service/panel"),
-			StructAllow: setOf("ApiTokenView", "PanelUpdateStatus"),
+			StructAllow: setOf("ApiTokenView", "PanelUpdateStatus", "Sponsor", "SponsorList"),
 		},
 		{
 			Path:        resolveRel(root, "internal/amneziawg"),
