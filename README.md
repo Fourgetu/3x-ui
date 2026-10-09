@@ -103,7 +103,7 @@ x-ui
 安装指定版本时，将版本标签作为参数传入中文安装脚本，例如：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Fourgetu/3x-ui-cn-installer/main/install-cn.sh) v3.9.0-fourgetu.1
+bash <(curl -fsSL https://raw.githubusercontent.com/Fourgetu/3x-ui-cn-installer/main/install-cn.sh) v3.9.0-fourgetu.2
 ```
 
 ### 更新和查看版本
@@ -119,9 +119,9 @@ Every release asset is published with a `.sha256` sum next to it. Both `install.
 
 For full documentation — installation, configuration, operations, and the complete API reference — visit **[docs.sanaei.dev](https://docs.sanaei.dev)**.
 
-当前源码已同步官方 `v3.9.0`，发布版本为 `v3.9.0-fourgetu.1`。安装前请确认对应 GitHub Release 已提供所需架构的安装包和 `.sha256` 校验文件。
+当前源码已同步官方 `v3.9.0`，发布版本为 `v3.9.0-fourgetu.2`。安装前请确认对应 GitHub Release 已提供所需架构的安装包和 `.sha256` 校验文件。
 
-兼容处理和验证结果见 [v3.9.0 同步记录](docs/upstream-v3.9.0-sync.md)。构建要求：Go 1.27.1、Node 26 / npm 11、CGO C 编译器；Xray 使用官方 v26.9.30。
+兼容处理和验证结果见 [v3.9.0 同步记录](docs/upstream-v3.9.0-sync.md)。构建要求：Go 1.27.2、Node 26 / npm 11、CGO C 编译器；Xray 使用官方 v26.9.30。
 
 ## 支持的平台
 

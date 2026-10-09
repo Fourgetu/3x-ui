@@ -1,12 +1,12 @@
 # Fourgetu v3.9.0 同步记录
 
-完成日期：2026-10-09（Asia/Shanghai）。源码候选版本：`3.9.0-fourgetu.1`。
+完成日期：2026-10-09（Asia/Shanghai）。源码候选版本：`3.9.0-fourgetu.2`。
 
 ## 基线与范围
 
 - 从已发布的 `origin/sync/upstream-v3.8.5`（`53203333`）合并官方 `v3.9.0`（提交 `3cd4bf50`）。该基线包含当前旧功能分支和 `origin/main` 的全部提交，以及上一次发布的后端编译修复。
 - 工作分支：`codex/sync-upstream-v3.9.0`。保留真实的 Git 合并历史，可继续三方同步。
-- 同步提交 `32f896dd` 完成了本地代码与验证。用户随后授权发布到 GitHub，发布准备提交更新 README 的安装版本，分支和 main 采用正常快进推送，创建新标签 `v3.9.0-fourgetu.1`；不更新服务器。
+- 同步提交 `32f896dd` 完成了本地代码与验证。用户随后授权发布到 GitHub，发布准备提交更新 README 的安装版本，分支和 main 采用正常快进推送，创建新标签 `v3.9.0-fourgetu.2`；不更新服务器。
 - 当前目录原有的 `3x-ui-cn-installer/` 和 `release-download-v2/` 未纳入主仓库提交。发布完成后通过中文安装器仓库既有的同步工作流更新其脚本。
 
 ## 官方优先与定制兼容
@@ -23,7 +23,7 @@
 | Windows oxlint 测试入口                         | 官方已有等价修复，整个测试文件采用官方版本，删除重复的自定义分支。                                                                                 |
 | 服务停止                                        | 使用官方 HTTP/任务停止、TUIC 最终流量落盘顺序，再接入 GOST 停止。                                                                                  |
 | 安装与升级                                      | 安装包、菜单和更新源保持 Fourgetu；修复遗漏的网页更新源。稳定版网页/命令行更新均从选定的发布标签读取更新脚本，防止旧 main 脚本把面板替换为官方版。 |
-| 版本识别                                        | 二进制标记为 `3.9.0-fourgetu.1`；前后端按上游三段版本和 Fourgetu 数字修订号排序，节点协议版本检查也识别该后缀。                                    |
+| 版本识别                                        | 二进制标记为 `3.9.0-fourgetu.2`；前后端按上游三段版本和 Fourgetu 数字修订号排序，节点协议版本检查也识别该后缀。                                    |
 
 官方新增的原生 TUIC、Xray v26.9.30、周续费、订阅排除、流量导入导出、Telegram 权限和安全修复均随合并保留。Go 依赖、前端依赖、构建工具要求使用官方 v3.9.0 基线。
 
@@ -45,7 +45,7 @@
 - 最终前端完整回归：182 个文件、1,835 项测试通过，包含单元/组件及 28 个文件、95 项 Storybook Chromium 浏览器测试。
 - `npm run gen`、`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build`、`npm run build-storybook` 通过。
 - `npm audit --omit=dev --audit-level=high` 通过；仍有 `swagger-ui-react → remarkable → argparse → sprintf-js` 链的 4 项 moderate 报告。当前 sprintf-js 无修补发行版，审计建议的 Swagger 3.x 降级属于破坏性改动，未采用。
-- `go build` 成功；二进制 `-v` 输出 `3.9.0-fourgetu.1`。
+- `go build` 成功；二进制 `-v` 输出 `3.9.0-fourgetu.2`。
 - `install.sh`、`update.sh`、`x-ui.sh`、`DockerInit.sh` 的 Bash 语法检查通过。模拟升级测试验证 Fourgetu 标签固定、非法标签拒绝及下载失败行为。
 - 格式检查最初主要受 Windows `core.autocrlf=true` 的工作区换行影响；统一相关工作区文本为 LF，并格式化 4 个历史定制文件后，全量格式检查通过。没有大范围改写官方代码。`git diff --check` 和冲突标记检查通过。
 
@@ -53,4 +53,10 @@
 
 ## 发布核验
 
-以 `v3.9.0-fourgetu.1` 标签触发 Linux 7 架构和 Windows amd64 发布构建；仅在 16 个安装包及校验文件齐全后将 Release 改为稳定版和 Latest。然后触发中文安装器的同步工作流，核对其版本记录和下载源。
+以 `v3.9.0-fourgetu.2` 标签触发 Linux 7 架构和 Windows amd64 发布构建；仅在 16 个安装包及校验文件齐全后将 Release 改为稳定版和 Latest。然后触发中文安装器的同步工作流，核对其版本记录和下载源。
+
+## 发布期间的云端验证
+
+首次 v3.9.0-fourgetu.1 仅保留为预发布，稳定版使用 v3.9.0-fourgetu.2。云端发现的工具链漏洞通过 Go 1.27.2 和 golang.org/x/net v0.60.0 修复；限速进程检查加入超时，进程/网络调用使用 context。更新后本地 Go 全量测试通过，golangci-lint 报告 0 issues，govulncheck 报告当前调用代码受影响漏洞为 0。
+
+云端首次验证已通过 Linux Go 全量、PostgreSQL 数据持久化/迁移、race、fuzz、代码生成及前端检查；文档格式问题修复后 Docs CI 通过。Docker Hub 缺少仓库凭据、GitHub Pages 尚未启用，两个独立发布流程未成功，不影响普通 GitHub Release 安装包。

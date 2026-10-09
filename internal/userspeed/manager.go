@@ -2,6 +2,7 @@ package userspeed
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -292,7 +293,9 @@ func buildConfig(routes []DesiredRoute) gostConfig {
 }
 
 func validateConfig(path string) error {
-	cmd := exec.Command(BinaryPath(), "-C", path, "-O", "json")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, BinaryPath(), "-C", path, "-O", "json")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -406,7 +409,8 @@ func (m *Manager) reloadOrStartLocked() error {
 		}
 		m.expectedExit = false
 	}
-	cmd := exec.Command(BinaryPath(), "-C", ConfigPath(), "-R", "5s")
+	// The manager owns this long-lived process and terminates it in StopAll.
+	cmd := exec.CommandContext(context.Background(), BinaryPath(), "-C", ConfigPath(), "-R", "5s")
 	cmd.Stdout = &gostLogWriter{}
 	cmd.Stderr = &gostLogWriter{}
 	if err := cmd.Start(); err != nil {
@@ -503,7 +507,9 @@ func (m *Manager) Status() Status {
 	installed := false
 	if stat, err := os.Stat(BinaryPath()); err == nil && !stat.IsDir() {
 		installed = true
-		if out, runErr := exec.Command(BinaryPath(), "-V").CombinedOutput(); runErr == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if out, runErr := exec.CommandContext(ctx, BinaryPath(), "-V").CombinedOutput(); runErr == nil {
 			version = strings.TrimSpace(strings.Split(string(out), "\n")[0])
 		}
 	}
@@ -523,18 +529,23 @@ func (m *Manager) Status() Status {
 
 func verifyListeners(routes []DesiredRoute) error {
 	deadline := time.Now().Add(10 * time.Second)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
 	for _, route := range routes {
 		for _, network := range route.Networks {
 			for {
+				if ctx.Err() != nil {
+					return fmt.Errorf("GOST %s listener did not bind port %d", network, route.ExternalPort)
+				}
 				var ok bool
 				if network == "udp" {
-					conn, err := net.ListenPacket("udp4", "127.0.0.1:"+strconv.Itoa(route.ExternalPort))
+					conn, err := (&net.ListenConfig{}).ListenPacket(ctx, "udp4", "127.0.0.1:"+strconv.Itoa(route.ExternalPort))
 					ok = err != nil
 					if conn != nil {
 						_ = conn.Close()
 					}
 				} else {
-					conn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(route.ExternalPort), 500*time.Millisecond)
+					conn, err := (&net.Dialer{Timeout: 500 * time.Millisecond}).DialContext(ctx, "tcp", "127.0.0.1:"+strconv.Itoa(route.ExternalPort))
 					ok = err == nil
 					if conn != nil {
 						_ = conn.Close()
