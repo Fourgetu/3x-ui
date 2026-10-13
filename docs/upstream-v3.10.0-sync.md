@@ -1,13 +1,13 @@
 # Fourgetu v3.10.0 同步记录
 
-同步日期：2026-10-13（Asia/Shanghai）。候选版本：`3.10.0-fourgetu.1`。
+同步日期：2026-10-13（Asia/Shanghai）。发布版本：`3.10.0-fourgetu.1`。
 
 ## 基线与范围
 
 - 官方最新稳定版核验：GitHub Release API 返回 `v3.10.0`，发布时间为 2026-10-12 14:44:53 UTC；标签提交为 `74c3cc38`。
 - 从已发布的 Fourgetu `v3.9.0-fourgetu.2`（`c94b01db`）三方合并官方标签，工作分支为 `codex/sync-upstream-v3.10.0`。
-- 保留真实合并历史。本次只完成源码、构建流程和本地验证；未创建发布标签、推送 main、发布安装包或更新服务器。
-- `3x-ui-cn-installer/` 与 `release-download-v2/` 是原有未跟踪目录，不纳入主仓库提交。中文安装器仅生成缓存中的候选脚本并验证，没有改写其已发布脚本。
+- 保留真实合并历史。源码合并完成后，用户授权发布到 GitHub。分支和 main 采用正常快进推送，并创建新版本标签；不更新服务器。
+- `3x-ui-cn-installer/` 与 `release-download-v2/` 是原有未跟踪目录，不纳入主仓库提交。中文安装器先生成缓存中的候选脚本并验证，主仓库稳定版发布后再执行其既有同步工作流。
 
 ## 官方优先与定制兼容
 
@@ -59,4 +59,8 @@
 - 出站使用私有 CA 时，启用官方 TLS 的 `Use system CA`。
 - xdns/端口跳跃客户端应使用 Xray v26.10.10 或更新版本。
 - 自定义 `XUI_GOST_CONFIG_PATH` 若位于官方可写目录之外，需要将其父目录加入管理员的 systemd drop-in `20-local.conf` 的 `ReadWritePaths=`；修改 `XUI_*_FOLDER` 后按官方流程重新运行更新脚本。
-- README 的固定版本安装示例继续指向已发布的 v3.9.0-fourgetu.2；本地候选版不是已发布安装包。
+- README 的固定版本安装示例指向 v3.10.0-fourgetu.1；应在 Release 完成构建并提升为稳定版后安装。
+
+## GitHub 发布流程
+
+发布标签：`v3.10.0-fourgetu.1`。先构建 Linux 七架构和 Windows amd64，确认 8 个安装包和对应的 8 个 SHA-256 文件齐全、检查云端 CI，再将预发布提升为稳定版并设为 Latest。最后同步 Fourgetu/3x-ui-cn-installer，并核对版本记录、下载源及中文菜单。
