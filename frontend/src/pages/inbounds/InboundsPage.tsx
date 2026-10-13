@@ -175,6 +175,7 @@ export default function InboundsPage() {
   const [qrClients, setQrClients] = useState<
     { email?: string; subId?: string; [k: string]: unknown }[] | null
   >(null);
+  const qrNodeAddress = qrDbInbound?.nodeId ? nodesById.get(qrDbInbound.nodeId)?.address || '' : '';
   const [qrProtocolOnly, setQrProtocolOnly] = useState(true);
   const [relayOpen, setRelayOpen] = useState(false);
 
@@ -221,7 +222,6 @@ export default function InboundsPage() {
     () => hostOverrideFor(infoDbInbound),
     [infoDbInbound, hostOverrideFor],
   );
-  const qrNodeAddress = useMemo(() => hostOverrideFor(qrDbInbound), [qrDbInbound, hostOverrideFor]);
 
   const openText = useCallback(
     (opts: {
@@ -334,6 +334,7 @@ export default function InboundsPage() {
       switch (dbInbound.protocol) {
         case 'trojan':
         case 'shadowsocks':
+        case 'masque':
           return c.password === client.password && c.email === client.email;
         default:
           return c.id === client.id && c.email === client.email;
@@ -692,6 +693,7 @@ export default function InboundsPage() {
       let target = dbInbound;
       if (hydratingKeys.includes(key)) {
         const hydrated = await hydrateInbound(dbInbound.id);
+        if (!hydrated && key === 'qrcode') return;
         if (hydrated) target = hydrated;
       }
       switch (key) {

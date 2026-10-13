@@ -2,8 +2,8 @@ import { useTranslation } from 'react-i18next';
 import { Button, Dropdown, type MenuProps } from 'antd';
 import {
   MoreOutlined,
-  EditOutlined,
   QrcodeOutlined,
+  EditOutlined,
   CopyOutlined,
   ExportOutlined,
   RetweetOutlined,
@@ -15,7 +15,7 @@ import {
   UsergroupDeleteOutlined,
 } from '@ant-design/icons';
 
-import { isInboundMultiUser, showQrCodeMenu } from './helpers';
+import { isInboundMultiUser } from './helpers';
 import type { DBInboundRecord, RowAction } from './types';
 
 interface RowActionsMenuProps {
@@ -43,7 +43,7 @@ export function buildRowActionsMenu({
   if (isMobile) {
     items.push({ key: 'edit', icon: <EditOutlined />, label: t('edit') });
   }
-  if (showQrCodeMenu(record) || (isInboundMultiUser(record) && hasClients)) {
+  if (isInboundMultiUser(record) && hasClients && record.protocol !== 'masque') {
     items.push({ key: 'qrcode', icon: <QrcodeOutlined />, label: t('qrCode') });
   }
   if (isInboundMultiUser(record)) {

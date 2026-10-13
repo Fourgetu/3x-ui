@@ -34,23 +34,26 @@ if [ -z "$MTG_MULTI_VER" ]; then
 fi
 mkdir -p build/bin
 cd build/bin
-curl -sfLRO "https://github.com/XTLS/Xray-core/releases/download/v26.9.30/Xray-linux-${ARCH}.zip"
+curl -sfLRO "https://github.com/XTLS/Xray-core/releases/download/v26.10.10/Xray-linux-${ARCH}.zip"
 unzip "Xray-linux-${ARCH}.zip"
 rm -f "Xray-linux-${ARCH}.zip" geoip.dat geosite.dat
 mv xray "xray-linux-${FNAME}"
 
 case $FNAME in
-    i386) GOSTARCH="386" ;;
-    arm32) GOSTARCH="armv7" ;;
-    armv6) GOSTARCH="armv6" ;;
-    *) GOSTARCH="$FNAME" ;;
+    i386) GOSTARCH="386"; GOST_RUNTIME_ARCH="386" ;;
+    arm32) GOSTARCH="armv7"; GOST_RUNTIME_ARCH="arm" ;;
+    armv6) GOSTARCH="armv6"; GOST_RUNTIME_ARCH="arm" ;;
+    *) GOSTARCH="$FNAME"; GOST_RUNTIME_ARCH="$FNAME" ;;
 esac
 GOST_PKG="gost_${GOST_VER}_linux_${GOSTARCH}"
 curl -sfLRO "https://github.com/go-gost/gost/releases/download/v${GOST_VER}/${GOST_PKG}.tar.gz"
-tar -xzf "${GOST_PKG}.tar.gz"
-mv gost "gost-linux-${FNAME}"
-rm -f "${GOST_PKG}.tar.gz"
-chmod +x "gost-linux-${FNAME}"
+curl -sfL "https://github.com/go-gost/gost/releases/download/v${GOST_VER}/checksums.txt" -o gost-checksums.txt
+awk -v name="${GOST_PKG}.tar.gz" '$2 == name { print; found=1 } END { if (!found) exit 1 }' gost-checksums.txt > gost.sha256
+sha256sum -c gost.sha256
+tar -xzf "${GOST_PKG}.tar.gz" gost
+mv gost "gost-linux-${GOST_RUNTIME_ARCH}"
+rm -f "${GOST_PKG}.tar.gz" gost-checksums.txt gost.sha256
+chmod +x "gost-linux-${GOST_RUNTIME_ARCH}"
 
 # mtg-multi (MTProto sidecar) ships prebuilt release binaries for every target
 # we package, so download and unpack the matching one instead of compiling.

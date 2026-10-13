@@ -10,12 +10,14 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"net"
 	"testing"
 	"time"
 
+	serverquic "github.com/apernet/quic-go"
 	"github.com/google/uuid"
 	"github.com/quic-go/quic-go"
 )
@@ -196,12 +198,51 @@ func testServerTCPConnectE2E(t *testing.T, controller string) {
 		t.Fatalf("expected active email alice@example.com, got %v", activeEmails)
 	}
 
-	deltas := server.CollectClientTraffic()
-	if len(deltas) == 0 {
-		t.Fatalf("expected traffic deltas, got none")
+	waitForClientTraffic(t, server, "alice@example.com", int64(len(testMsg)))
+}
+
+// closeUniStream tolerates only the server's STOP_SENDING: it cancels the read side of a
+// uni stream once the command is parsed, which can land before the client's FIN.
+func closeUniStream(t *testing.T, stream interface {
+	Close() error
+	Context() context.Context
+},
+) {
+	t.Helper()
+	err := stream.Close()
+	if err == nil {
+		return
 	}
-	if deltas[0].Email != "alice@example.com" || deltas[0].Up < int64(len(testMsg)) || deltas[0].Down < int64(len(testMsg)) {
-		t.Fatalf("unexpected traffic deltas: %+v", deltas[0])
+	cause := context.Cause(stream.Context())
+	var clientErr *quic.StreamError
+	var serverErr *serverquic.StreamError
+	if (errors.As(cause, &clientErr) && clientErr.Remote) || (errors.As(cause, &serverErr) && serverErr.Remote) {
+		return
+	}
+	t.Fatalf("close uni stream: %v (cause %v)", err, cause)
+}
+
+// waitForClientTraffic accumulates drained deltas because the up and down counters are
+// bumped on different relay goroutines, so the echo can arrive before the upload is counted.
+func waitForClientTraffic(t *testing.T, server *Server, email string, minBytes int64) {
+	t.Helper()
+	var up, down int64
+	deadline := time.Now().Add(4 * time.Second)
+	for {
+		for _, delta := range server.CollectClientTraffic() {
+			if delta.Email != email {
+				t.Fatalf("unexpected traffic delta for %q: %+v", delta.Email, delta)
+			}
+			up += delta.Up
+			down += delta.Down
+		}
+		if up >= minBytes && down >= minBytes {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("traffic for %s = up %d, down %d; want both >= %d", email, up, down, minBytes)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -356,13 +397,7 @@ func testServerUDPDatagramE2E(t *testing.T, controller string) {
 	}
 
 	// 4. Verify traffic
-	deltas := server.CollectClientTraffic()
-	if len(deltas) == 0 {
-		t.Fatalf("expected traffic deltas, got none")
-	}
-	if deltas[0].Email != "bob@example.com" || deltas[0].Up < int64(len(udpMsg)) || deltas[0].Down < int64(len(udpMsg)) {
-		t.Fatalf("unexpected traffic deltas: %+v", deltas[0])
-	}
+	waitForClientTraffic(t, server, "bob@example.com", int64(len(udpMsg)))
 }
 
 func TestServerUDPStreamE2E(t *testing.T) {
@@ -433,9 +468,7 @@ func testServerUDPStreamE2E(t *testing.T, controller string) {
 	if _, err := authStream.Write(authPayload); err != nil {
 		t.Fatalf("write authentication payload failed: %v", err)
 	}
-	if err := authStream.Close(); err != nil {
-		t.Fatalf("close authentication stream failed: %v", err)
-	}
+	closeUniStream(t, authStream)
 
 	target := &Address{Type: AddrTypeIPv4, IP: net.ParseIP("8.8.8.8"), Port: 53}
 	udpMsg := bytes.Repeat([]byte("s"), 8500)
@@ -458,9 +491,7 @@ func testServerUDPStreamE2E(t *testing.T, controller string) {
 		if _, err := packetStream.Write(frame.Bytes()); err != nil {
 			t.Fatalf("write packet frame failed: %v", err)
 		}
-		if err := packetStream.Close(); err != nil {
-			t.Fatalf("close packet stream failed: %v", err)
-		}
+		closeUniStream(t, packetStream)
 	}
 
 	replyReassembler := newPacketReassembler(maxUdpRelayPacketSize)
