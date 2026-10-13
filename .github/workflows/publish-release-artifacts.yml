@@ -1,0 +1,84 @@
+name: Publish verified release artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Release 3X-UI run ID
+        required: true
+        type: string
+      release_tag:
+        description: Existing release tag built by that run
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_RUN: ${{ inputs.run_id }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Verify build provenance and download artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BUILD_RUN" =~ ^[0-9]+$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-fourgetu\.[0-9]+$ ]]
+          gh api "repos/$GH_REPO/actions/runs/$BUILD_RUN" > run.json
+          test "$(jq -r .conclusion run.json)" = success
+          test "$(jq -r .path run.json)" = .github/workflows/release.yml
+          test "$(jq -r .head_sha run.json)" = "$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)"
+          gh release view "$RELEASE_TAG" --json tagName > /dev/null
+          gh run download "$BUILD_RUN" --dir downloads
+
+      - name: Verify checksums and all platform packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir dist
+          for platform in linux-amd64 linux-arm64 linux-armv7 linux-armv6 linux-armv5 linux-386 linux-s390x windows-amd64; do
+            ext=tar.gz
+            [[ "$platform" != windows-* ]] || ext=zip
+            archive="x-ui-$platform.$ext"
+            for name in "$archive" "$archive.sha256"; do
+              mapfile -t matches < <(find downloads -type f -name "$name")
+              test "${#matches[@]}" = 1
+              cp -- "${matches[0]}" "dist/$name"
+            done
+            # Accept only the expected filename from the checksum file.
+            awk -v name="$archive" 'NF == 2 && $2 == name && $1 ~ /^[0-9a-fA-F]+$/ && length($1) == 64 { print; found++ } END { if (NR != 1 || found != 1) exit 1 }' "dist/$archive.sha256" > dist/check.sha256
+            (cd dist && sha256sum -c check.sha256)
+            if [[ "$ext" == zip ]]; then
+              unzip -Z1 "dist/$archive" > members.txt
+              grep -Fx 'x-ui/bin/gost-windows-amd64.exe' members.txt
+              grep -Fx 'x-ui/x-ui.exe' members.txt
+            else
+              arch="${platform#linux-}"
+              [[ "$arch" != armv* ]] || arch=arm
+              tar -tzf "dist/$archive" > members.txt
+              grep -Fx "x-ui/bin/gost-linux-$arch" members.txt
+              grep -Fx 'x-ui/x-ui' members.txt
+            fi
+          done
+          rm dist/check.sha256
+          test "$(find dist -type f | wc -l)" = 16
+
+      - name: Smoke test Linux amd64 panel and GOST
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir smoke
+          tar -xzf dist/x-ui-linux-amd64.tar.gz -C smoke x-ui/x-ui x-ui/bin/gost-linux-amd64
+          test "$(smoke/x-ui/x-ui -v)" = "${RELEASE_TAG#v}"
+          smoke/x-ui/bin/gost-linux-amd64 -V
+
+      - name: Upload validated packages without promoting the release
+        shell: bash
+        run: gh release upload "$RELEASE_TAG" dist/* --clobber
