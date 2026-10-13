@@ -51,7 +51,7 @@
 - 安装、更新、菜单、Docker 脚本 Bash 语法检查通过；中文安装器现有 URL 回归、候选中文脚本生成和语法检查通过。
 - Release YAML 可解析；GOST Linux amd64 压缩包通过官方 SHA-256 核验。Windows Defender 拦截了测试压缩包，Linux 二进制本机重命名也遭拒绝，因此本机未完成 GOST 解压/运行及跨平台实际发布打包验证，未改变防护设置。
 
-未在本机执行 PostgreSQL 专用用例、Linux systemd 沙箱实际运行、真实节点 E2E 或生产流量限速压测。候选版需经 Linux/Windows 发布构建核验后才能作为安装包发布。
+未在本机执行 PostgreSQL 专用用例、Linux systemd 沙箱实际运行、真实节点 E2E 或生产流量限速压测。后续云端构建与发布结果见下节。
 
 ## 升级注意事项
 
@@ -59,8 +59,21 @@
 - 出站使用私有 CA 时，启用官方 TLS 的 `Use system CA`。
 - xdns/端口跳跃客户端应使用 Xray v26.10.10 或更新版本。
 - 自定义 `XUI_GOST_CONFIG_PATH` 若位于官方可写目录之外，需要将其父目录加入管理员的 systemd drop-in `20-local.conf` 的 `ReadWritePaths=`；修改 `XUI_*_FOLDER` 后按官方流程重新运行更新脚本。
-- README 的固定版本安装示例指向 v3.10.0-fourgetu.1；应在 Release 完成构建并提升为稳定版后安装。
+- README 的固定版本安装示例指向已发布的稳定版 v3.10.0-fourgetu.1。
 
 ## GitHub 发布流程
 
 发布标签：`v3.10.0-fourgetu.1`。先构建 Linux 七架构和 Windows amd64，确认 8 个安装包和对应的 8 个 SHA-256 文件齐全、检查云端 CI，再将预发布提升为稳定版并设为 Latest。最后同步 Fourgetu/3x-ui-cn-installer，并核对版本记录、下载源及中文菜单。
+
+## 云端完成核验（2026-10-13）
+
+- GitHub 暂停了 fork 的 Actions，首次推送没有触发构建；用户恢复 Actions 后，从原始标签手动构建，不移动标签。
+- 增加 CI/Docs CI 手动入口及 `Publish verified release artifacts` 恢复流程。上传前要求构建成功、工作流路径正确、构建提交与标签一致，校验 8 个平台的文件、SHA-256、GOST 名称及 Linux amd64 启动。主仓库后续工作流提交未改变标签内的产品代码。
+- [八平台构建](https://github.com/Fourgetu/3x-ui/actions/runs/38403432039)：Linux amd64、386、arm64、armv5、armv6、armv7、s390x 和 Windows amd64 全部成功。
+- [云端 CI](https://github.com/Fourgetu/3x-ui/actions/runs/38403615658)：Go 全量、PostgreSQL、node-e2e、race、fuzz、golangci、govulncheck、代码生成及前端全部成功。前端 194 个文件、1,895 项测试全部通过，生产/Storybook 构建及审计通过。
+- [Docs CI](https://github.com/Fourgetu/3x-ui/actions/runs/38403615423) 通过。
+- [产物校验与上传](https://github.com/Fourgetu/3x-ui/actions/runs/38404224854) 通过，包含 GOST 文件和 Linux amd64 面板/GOST 启动验证。
+- 已从 Release 下载全部 8 个 SHA-256 文件，并与 GitHub API 公布的每个安装包 digest 逐一比对一致。
+- Release `v3.10.0-fourgetu.1` 已提升为稳定版 / Latest，共 16 个附件。未更新任何生产服务器。
+
+- [中文安装器同步](https://github.com/Fourgetu/3x-ui-cn-installer/actions/runs/38404634682) 成功，提交 a057224；版本记录和公开 raw 地址均为 v3.10.0-fourgetu.1，安装/菜单脚本 Bash 语法及 Fourgetu 下载源验证通过。

@@ -119,7 +119,7 @@ Every release asset is published with a `.sha256` sum next to it. Both `install.
 
 For full documentation — installation, configuration, operations, and the complete API reference — visit **[docs.sanaei.dev](https://docs.sanaei.dev)**.
 
-当前源码已同步官方 `v3.10.0`，发布标签为 `v3.10.0-fourgetu.1`。发布构建首先标为预发布，全部架构安装包及 `.sha256` 文件验证齐全后才会提升为稳定版。安装时请使用 GitHub Release 中已验证的稳定版本。
+当前源码已同步官方 `v3.10.0`，发布标签为 `v3.10.0-fourgetu.1`。该版本已发布为稳定版 / Latest，Linux 七架构和 Windows amd64 安装包及 `.sha256` 文件均已验证齐全。
 
 兼容处理和验证结果见 [v3.10.0 同步记录](docs/upstream-v3.10.0-sync.md)。构建要求：Go 1.27.2、Node 26 / npm 11、CGO C 编译器；Xray 使用官方 v26.10.10。
 
