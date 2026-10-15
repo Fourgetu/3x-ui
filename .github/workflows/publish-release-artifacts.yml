@@ -58,7 +58,8 @@ jobs:
             if [[ "$ext" == zip ]]; then
               unzip -Z1 "dist/$archive" > members.txt
               grep -Fx 'x-ui/bin/gost-windows-amd64.exe' members.txt
-              grep -Fx 'x-ui/3x-ui.exe' members.txt
+              # v3.10.2 renamed the panel; keep recovery usable for older tags.
+              test "$(grep -Ec '^x-ui/(3x-ui|x-ui)\.exe$' members.txt)" = 1
             else
               arch="${platform#linux-}"
               [[ "$arch" != armv* ]] || arch=arm

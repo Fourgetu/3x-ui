@@ -33,7 +33,9 @@
 - 生产依赖审计：0 vulnerabilities。
 - Windows CGO 编译和启动版本通过，输出 `3.10.2-fourgetu.1`；FileVersion、ProductVersion 与版本一致，OriginalFilename 为 `3x-ui.exe`。本机链接器报告多 manifest 合并警告，但构建退出码为 0，程序可启动且上述资源读取正确；云端 Windows 构建另行验证。
 - 安装、更新、管理菜单、Docker 初始化脚本 Bash 语法检查通过。
-- 前端全量测试、Go Lint 和云端检查结果在完成后补充。
+- 前端全量单元、组件及 Storybook 浏览器测试：194 个文件、1,897 项全部通过。
+- Go Lint：`golangci-lint run` 报告 0 issues。
+- 云端检查结果在完成后补充。
 
 ## 发布与升级
 
@@ -42,3 +44,5 @@
 Windows 用户需将服务、计划任务、快捷方式或脚本中的 `x-ui.exe` 改为 `3x-ui.exe`。Linux 启动命令不变。节点应随面板升级，才能使用此次节点和 Shadowsocks 热更新修复。
 
 沿用官方 systemd 沙箱：自定义 GOST 配置若位于数据库目录之外，需配置本机 `20-local.conf` 的 `ReadWritePaths=`。没有更新任何生产服务器。
+
+附带触发的上游 Docker 镜像发布工作流仍引用上游镜像仓库，因本 fork 未配置 Docker Hub 凭据在登录阶段失败；没有发布 Docker 镜像。此流程独立于本次八平台 GitHub 安装包发布，现有 Compose 继续从本地源码构建。
