@@ -290,9 +290,13 @@ jobs:
         shell: pwsh
         run: |
           $expected = (Get-Content internal/config/version -Raw).Trim()
+          $expectedPanel = $expected
+          if ($env:GITHUB_REF -notlike 'refs/tags/*') {
+            $expectedPanel = "dev+$($env:GITHUB_SHA.Substring(0, 8))"
+          }
           $actual = (& .\xui-release.exe -v | Out-String).Trim()
-          if ($LASTEXITCODE -ne 0 -or $actual -ne $expected) {
-            throw "Panel version mismatch: expected $expected, got $actual"
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $expectedPanel) {
+            throw "Panel version mismatch: expected $expectedPanel, got $actual"
           }
           $info = (Get-Item .\xui-release.exe).VersionInfo
           if ($info.ProductVersion -ne $expected -or $info.FileVersion -ne $expected -or $info.OriginalFilename -ne '3x-ui.exe') {
