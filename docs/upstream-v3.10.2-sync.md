@@ -56,7 +56,9 @@ Windows 用户需将服务、计划任务、快捷方式或脚本中的 `x-ui.ex
 - [产物校验与上传](https://github.com/Fourgetu/3x-ui/actions/runs/38724845946) 通过：验证构建来源和标签 SHA、8 个包与 8 个 SHA-256 文件、各平台 GOST 文件名、Windows 程序新名称、Linux amd64 面板和 GOST 启动。
 - 从 Release 下载全部 SHA-256 文件，与 GitHub API 返回的每个安装包 digest 逐一比对，8 项全部一致。
 - Release 已提升为稳定版 / Latest，共 16 个附件。
-- Windows 工作流同时验证稳定版和 dev 版各自的启动版本；本机 dev 构建输出 `dev+abcdef12`，文件资源仍正确显示 `3.10.2-fourgetu.1`。旧主分支的重复 dev 构建已取消，更新后的 dev 构建单独运行。
+- Windows 工作流同时验证稳定版和 dev 版各自的启动版本；本机 dev 构建输出 `dev+abcdef12`，文件资源仍正确显示 `3.10.2-fourgetu.1`。旧主分支的重复 dev 构建已取消，更新后的 [dev 构建及发布](https://github.com/Fourgetu/3x-ui/actions/runs/38724671679) 已全部通过。
 - 主分支 CodeQL 通过。文档网站构建完成，但 GitHub Pages 部署返回 404，提示未启用 Pages；没有修改仓库 Pages 设置。这不影响文档 CI 和 GitHub 安装包。
 
 - [中文安装器同步](https://github.com/Fourgetu/3x-ui-cn-installer/actions/runs/38725115185) 成功，提交 `f214c45`；本地和公开 raw 版本记录均为 `v3.10.2-fourgetu.1`。中文脚本 Bash 语法及 URL 回归测试通过，继续使用 Fourgetu 下载源。
+
+- 主分支推送后的 [CI](https://github.com/Fourgetu/3x-ui/actions/runs/38724524000) 也全部通过；最终核验 Latest 仍为稳定版 `v3.10.2-fourgetu.1`，16 个附件齐全。
