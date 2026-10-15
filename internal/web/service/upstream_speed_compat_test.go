@@ -71,3 +71,57 @@ func TestBulkInboundPurgePreservesSharedClientSpeedLimit(t *testing.T) {
 		t.Fatalf("orphan remains: count=%d err=%v", orphans, err)
 	}
 }
+
+// Both official membership update paths must remove only the detached route,
+// while settling the shared record's flow from its surviving inbound.
+func TestInboundDetachSettlesFlowAndPreservesOtherSpeedLimit(t *testing.T) {
+	for _, delta := range []bool{false, true} {
+		name := "full sync"
+		if delta {
+			name = "client delta"
+		}
+		t.Run(name, func(t *testing.T) {
+			setupBulkDB(t)
+			svc := &ClientService{}
+			client := model.Client{Email: "shared@speed", ID: "ce8d33df-3a64-4f10-8f9b-91c3a8e0c333", Enable: true, Flow: "xtls-rprx-vision"}
+			first := mkInbound(t, 43204, model.VLESS, clientsSettings(t, []model.Client{client}))
+			if err := svc.SyncInbound(nil, first.Id, []model.Client{client}); err != nil {
+				t.Fatal(err)
+			}
+			client.Flow = ""
+			other := mkInbound(t, 43205, model.VLESS, clientsSettings(t, []model.Client{client}))
+			if err := svc.SyncInbound(nil, other.Id, []model.Client{client}); err != nil {
+				t.Fatal(err)
+			}
+			rec := lookupClientRecord(t, client.Email)
+			if rec.Flow != "xtls-rprx-vision" {
+				t.Fatalf("shared Vision flow lost before detach: %q", rec.Flow)
+			}
+			for _, id := range []int{first.Id, other.Id} {
+				if err := database.GetDB().Create(&model.ClientSpeedLimit{ClientID: rec.Id, InboundID: id, DownloadMbps: 50}).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			var err error
+			if delta {
+				err = svc.ApplyInboundClientDelta(nil, first.Id, nil, []string{client.Email})
+			} else {
+				err = svc.SyncInbound(nil, first.Id, nil)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec = lookupClientRecord(t, client.Email)
+			if rec.Flow != "" || !inboundLinksEmail(t, other.Id, client.Email) || inboundLinksEmail(t, first.Id, client.Email) {
+				t.Fatalf("membership or effective flow incorrect after detach: %+v", rec)
+			}
+			var limits []model.ClientSpeedLimit
+			if err := database.GetDB().Find(&limits).Error; err != nil {
+				t.Fatal(err)
+			}
+			if len(limits) != 1 || limits[0].InboundID != other.Id || limits[0].DownloadMbps != 50 {
+				t.Fatalf("surviving speed limit changed: %+v", limits)
+			}
+		})
+	}
+}

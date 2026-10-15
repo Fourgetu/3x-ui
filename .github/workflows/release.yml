@@ -274,6 +274,11 @@ jobs:
           go version
           gcc --version
 
+          # Version info + manifest resource: a bare stripped Go exe scores high on AV heuristics.
+          PANEL_VERSION=$(tr -d '[:space:]' < internal/config/version)
+          go run github.com/tc-hib/go-winres@v0.3.3 make --arch amd64 \
+            --product-version "$PANEL_VERSION" --file-version "$PANEL_VERSION"
+
           # Stamp the commit into per-commit (dev channel) builds only.
           LDFLAGS="-w -s"
           if [[ "$GITHUB_REF" != refs/tags/* ]]; then
@@ -281,12 +286,25 @@ jobs:
           fi
           go build -buildvcs=true -ldflags "$LDFLAGS" -o xui-release.exe -v .
 
+      - name: Verify Windows executable version and metadata
+        shell: pwsh
+        run: |
+          $expected = (Get-Content internal/config/version -Raw).Trim()
+          $actual = (& .\xui-release.exe -v | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $expected) {
+            throw "Panel version mismatch: expected $expected, got $actual"
+          }
+          $info = (Get-Item .\xui-release.exe).VersionInfo
+          if ($info.ProductVersion -ne $expected -or $info.FileVersion -ne $expected -or $info.OriginalFilename -ne '3x-ui.exe') {
+            throw 'Windows version resource is missing or incorrect'
+          }
+
       - name: Copy and download resources
         shell: pwsh
         run: |
           $retry = @{ MaximumRetryCount = 5; RetryIntervalSec = 10 }
           mkdir x-ui
-          Copy-Item xui-release.exe x-ui\x-ui.exe
+          Copy-Item xui-release.exe x-ui\3x-ui.exe
           mkdir x-ui\bin
           cd x-ui\bin
 

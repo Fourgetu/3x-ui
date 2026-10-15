@@ -28,7 +28,7 @@
 - 对每个客户端在每个入站上分别设置上传、下载 Mbps，保持原有身份绑定和 GOST 转发实现。
 - 支持本机 VLESS、VMess、Trojan 的 TCP/WS/gRPC/HTTPUpgrade/XHTTP 等传输，以及 Shadowsocks TCP/UDP；远程入站需在实际承载该入站的面板设置。
 - 订阅自动使用该客户端的专属限速端口，保留故障恢复、状态展示、删除/解绑后的端口与进程回收。
-- 官方 v3.10.0 尚无对应的用户级限速实现，因此继续保留本分支功能。
+- 官方 v3.10.2 尚无对应的用户级限速实现，因此继续保留本分支功能。
 
 ### 一键推荐协议模板
 
@@ -119,11 +119,13 @@ Every release asset is published with a `.sha256` sum next to it. Both `install.
 
 For full documentation — installation, configuration, operations, and the complete API reference — visit **[docs.sanaei.dev](https://docs.sanaei.dev)**.
 
-当前源码已同步官方 `v3.10.0`，发布标签为 `v3.10.0-fourgetu.1`。该版本已发布为稳定版 / Latest，Linux 七架构和 Windows amd64 安装包及 `.sha256` 文件均已验证齐全。
+当前源码已同步官方 `v3.10.2`，候选发布标签为 `v3.10.2-fourgetu.1`。已发布稳定版仍为 `v3.10.0-fourgetu.1`，上述固定版本安装示例可继续使用；新版本完成构建和验证后再提升为稳定版。
 
-兼容处理和验证结果见 [v3.10.0 同步记录](docs/upstream-v3.10.0-sync.md)。构建要求：Go 1.27.2、Node 26 / npm 11、CGO C 编译器；Xray 使用官方 v26.10.10。
+兼容处理和验证结果见 [v3.10.2 同步记录](docs/upstream-v3.10.2-sync.md)。构建要求：Go 1.27.2、Node 26 / npm 11、CGO C 编译器；Xray 使用官方 v26.10.10。
 
 升级时需要同步升级各节点。官方新增 systemd 沙箱：默认限速配置位于允许写入的数据库目录中；如果用 `XUI_GOST_CONFIG_PATH` 指向该目录之外，请将配置所在目录加入本机 `20-local.conf` 的 `ReadWritePaths=`。使用私有 CA 的出站应启用官方的“Use system CA”。
+
+Windows 用户升级到 v3.10.2 时，需要将服务、快捷方式或计划任务中的 `x-ui.exe` 改为官方新名称 `3x-ui.exe`。Linux 启动命令不变。
 
 ## 支持的平台
 
