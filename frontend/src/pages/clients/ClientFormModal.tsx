@@ -1015,6 +1015,28 @@ export default function ClientFormModal({
                                   methods.setValue('expiryDate', d ? d.valueOf() : 0)
                                 }
                               />
+                              <Space wrap size={[8, 8]} style={{ marginTop: 8 }}>
+                                {[1, 3, 6, 12].map((months) => (
+                                  <Button
+                                    key={months}
+                                    size="small"
+                                    htmlType="button"
+                                    onClick={() => {
+                                      const base = Math.max(
+                                        methods.getValues('expiryDate') || 0,
+                                        Date.now(),
+                                      );
+                                      methods.setValue(
+                                        'expiryDate',
+                                        dayjs(base).add(months, 'month').valueOf(),
+                                        { shouldDirty: true },
+                                      );
+                                    }}
+                                  >
+                                    {t(`pages.clients.extendExpiry${months}`)}
+                                  </Button>
+                                ))}
+                              </Space>
                             </Form.Item>
                           )}
                         </Col>

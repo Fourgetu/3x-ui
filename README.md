@@ -66,6 +66,10 @@
 - 节点名称支持显示服务器、入站备注、客户端名称和端口。
 - 同一客户端关联多个端口时，节点名称会自动增加序号，避免节点名称重复。
 
+### 客户端有效期快捷延长
+
+编辑客户端时，可在过期时间下方点击 **+1个月、+3个月、+半年、+一年**。未到期时从原到期时间顺延，已过期或未设置时从当前时间计算；支持连续点击累加，点击保存后才生效。按自然月计算并处理月底与闰年；首次使用后开始模式仍按天数设置。
+
 ### 中文化与版本同步
 
 - 提供中文安装脚本 `install-cn.sh` 和中文管理菜单 `x-ui-cn.sh`。
@@ -119,7 +123,7 @@ Every release asset is published with a `.sha256` sum next to it. Both `install.
 
 For full documentation — installation, configuration, operations, and the complete API reference — visit **[docs.sanaei.dev](https://docs.sanaei.dev)**.
 
-当前源码已同步官方 `v3.10.2`，发布标签为 `v3.10.2-fourgetu.1`。该版本已发布为稳定版 / Latest，Linux 七架构和 Windows amd64 的 8 个安装包及对应 SHA-256 文件均已验证。
+当前源码基于官方 `v3.10.2`，新增快捷延长有效期功能，候选版本为 `v3.10.2-fourgetu.2`。已发布稳定版仍为 `v3.10.2-fourgetu.1`；新版本完成构建及验证后再提升为稳定版。
 
 兼容处理和验证结果见 [v3.10.2 同步记录](docs/upstream-v3.10.2-sync.md)。构建要求：Go 1.27.2、Node 26 / npm 11、CGO C 编译器；Xray 使用官方 v26.10.10。
 
