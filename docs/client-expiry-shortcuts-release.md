@@ -1,6 +1,6 @@
 # 客户端有效期快捷延长发布记录
 
-日期：2026-10-23（Asia/Shanghai）。候选版本：`v3.10.2-fourgetu.5`。
+日期：2026-10-23（Asia/Shanghai）。稳定版本：`v3.10.2-fourgetu.5`。
 
 ## 功能与兼容
 
@@ -28,6 +28,16 @@
 
 ## 云端发布
 
-正式发布提交和 CI、八平台构建、产物验证结果将在完成后补充。
+发布标签固定于 `29bed6c014e9d1d4ee1d3e6c2ec4101dc23141a5`，已提升为稳定版 / Latest，16 个附件齐全。
+
+- [主分支 CI](https://github.com/Fourgetu/3x-ui/actions/runs/39942185194) 全部通过，提交与发布标签完全一致：Go 全量、节点 E2E、PostgreSQL、race、fuzz、govulncheck、Lint、代码生成和前端。前端为 195 个文件 / 1,906 项测试全部通过，生产及 Storybook 构建通过，生产依赖审计为 0 vulnerabilities。
+- [Docs CI](https://github.com/Fourgetu/3x-ui/actions/runs/39941657976) 和主分支 CodeQL 通过。
+- [八平台构建](https://github.com/Fourgetu/3x-ui/actions/runs/39941666961) 全部通过，包括 Windows 启动与版本资源验证。
+- [产物校验与上传](https://github.com/Fourgetu/3x-ui/actions/runs/39942486171) 通过，覆盖构建来源、标签提交、八平台安装包、SHA-256、GOST 文件名，以及 Linux amd64 面板/GOST/Xray 启动。
+- 从 Release 下载 8 个校验文件，并与 GitHub API 的各安装包 digest 逐一比对一致。实际运行的 Xray 版本为 26.10.21，使用 Go 1.27.3 编译。
+- 同提交的分支 CI 因测试浏览器安装长时间未完成，在主分支完整 CI 通过后取消重复运行，没有跳过必要检查。
+- [中文安装器同步](https://github.com/Fourgetu/3x-ui-cn-installer/actions/runs/39942974659) 在提升 Latest 后执行，已成功，提交 40d3ec5；本地和公开 raw 版本均为 v3.10.2-fourgetu.5，Bash 语法与 URL 回归测试通过。
 
 用户此前要求关闭的 Docs Deploy 保持停用，Docs CI 保持启用。上游 Docker 发布工作流仍因本 fork 缺少 Docker Hub 凭据失败；本次交付为 GitHub 安装包，没有发布 Docker 镜像。未修改生产服务器。
+
+- 主分支 dev 构建与发布（39942185168）亦成功；稳定版 Latest 仍为 v3.10.2-fourgetu.5。

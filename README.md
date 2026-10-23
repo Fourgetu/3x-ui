@@ -107,7 +107,7 @@ x-ui
 安装指定版本时，将版本标签作为参数传入中文安装脚本，例如：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Fourgetu/3x-ui-cn-installer/main/install-cn.sh) v3.10.2-fourgetu.1
+bash <(curl -fsSL https://raw.githubusercontent.com/Fourgetu/3x-ui-cn-installer/main/install-cn.sh) v3.10.2-fourgetu.5
 ```
 
 ### 更新和查看版本
@@ -123,7 +123,7 @@ Every release asset is published with a `.sha256` sum next to it. Both `install.
 
 For full documentation — installation, configuration, operations, and the complete API reference — visit **[docs.sanaei.dev](https://docs.sanaei.dev)**.
 
-当前源码基于官方 `v3.10.2`，新增快捷延长有效期功能，候选版本为 `v3.10.2-fourgetu.5`。已发布稳定版仍为 `v3.10.2-fourgetu.1`；新版本完成构建及验证后再提升为稳定版。
+当前稳定版为 `v3.10.2-fourgetu.5`，基于官方 `v3.10.2`，新增客户端有效期快捷延长功能。已验证 Linux 七架构和 Windows amd64 的 8 个安装包及对应 SHA-256 文件；构建使用 Go 1.27.3，内置 Xray v26.10.21，DOMPurify 升级到 3.4.17。发布详情见 [快捷续期发布记录](docs/client-expiry-shortcuts-release.md)。
 
 兼容处理和验证结果见 [v3.10.2 同步记录](docs/upstream-v3.10.2-sync.md)。构建要求：Go 1.27.3、Node 26 / npm 11、CGO C 编译器；Xray 使用官方 v26.10.21。
 
