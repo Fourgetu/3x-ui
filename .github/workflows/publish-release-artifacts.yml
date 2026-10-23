@@ -71,14 +71,15 @@ jobs:
           rm dist/check.sha256
           test "$(find dist -type f | wc -l)" = 16
 
-      - name: Smoke test Linux amd64 panel and GOST
+      - name: Smoke test Linux amd64 panel, GOST and Xray
         shell: bash
         run: |
           set -euo pipefail
           mkdir smoke
-          tar -xzf dist/x-ui-linux-amd64.tar.gz -C smoke x-ui/x-ui x-ui/bin/gost-linux-amd64
+          tar -xzf dist/x-ui-linux-amd64.tar.gz -C smoke x-ui/x-ui x-ui/bin/gost-linux-amd64 x-ui/bin/xray-linux-amd64
           test "$(smoke/x-ui/x-ui -v)" = "${RELEASE_TAG#v}"
           smoke/x-ui/bin/gost-linux-amd64 -V
+          smoke/x-ui/bin/xray-linux-amd64 version
 
       - name: Upload validated packages without promoting the release
         shell: bash
