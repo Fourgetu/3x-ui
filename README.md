@@ -123,9 +123,9 @@ Every release asset is published with a `.sha256` sum next to it. Both `install.
 
 For full documentation — installation, configuration, operations, and the complete API reference — visit **[docs.sanaei.dev](https://docs.sanaei.dev)**.
 
-当前源码基于官方 `v3.10.2`，新增快捷延长有效期功能，候选版本为 `v3.10.2-fourgetu.2`。已发布稳定版仍为 `v3.10.2-fourgetu.1`；新版本完成构建及验证后再提升为稳定版。
+当前源码基于官方 `v3.10.2`，新增快捷延长有效期功能，候选版本为 `v3.10.2-fourgetu.3`。已发布稳定版仍为 `v3.10.2-fourgetu.1`；新版本完成构建及验证后再提升为稳定版。
 
-兼容处理和验证结果见 [v3.10.2 同步记录](docs/upstream-v3.10.2-sync.md)。构建要求：Go 1.27.2、Node 26 / npm 11、CGO C 编译器；Xray 使用官方 v26.10.10。
+兼容处理和验证结果见 [v3.10.2 同步记录](docs/upstream-v3.10.2-sync.md)。构建要求：Go 1.27.3、Node 26 / npm 11、CGO C 编译器；Xray 使用官方 v26.10.10。
 
 升级时需要同步升级各节点。官方新增 systemd 沙箱：默认限速配置位于允许写入的数据库目录中；如果用 `XUI_GOST_CONFIG_PATH` 指向该目录之外，请将配置所在目录加入本机 `20-local.conf` 的 `ReadWritePaths=`。使用私有 CA 的出站应启用官方的“Use system CA”。
 
