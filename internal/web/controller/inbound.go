@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mhsanaei/3x-ui/v3/internal/amneziawgkern"
 	"github.com/mhsanaei/3x-ui/v3/internal/database/model"
 	"github.com/mhsanaei/3x-ui/v3/internal/util/wirecodec"
 	"github.com/mhsanaei/3x-ui/v3/internal/web/middleware"
@@ -64,10 +65,11 @@ func (a *InboundController) broadcastInboundsUpdate(userId int) {
 // node-sync push, so the node stores the row instead of re-judging it.
 func (a *InboundController) inboundServiceFor(c *gin.Context) *service.InboundService {
 	svc := a.inboundService
-	scope, _ := c.Get("api_token_scope")
+	scopeValue, _ := c.Get("api_token_scope")
+	scope, _ := scopeValue.(string)
 	// A master enrolled with an admin token (the -getApiToken default) has no
 	// node-sync scope, so it marks every request it sends instead.
-	svc.FromNodeSync = scope == model.ApiScopeNodeSync || c.GetHeader(wirecodec.MasterPushHeader) != ""
+	svc.FromNodeSync = model.IsNodeSyncApiScope(scope) || c.GetHeader(wirecodec.MasterPushHeader) != ""
 	return &svc
 }
 
@@ -79,6 +81,7 @@ func (a *InboundController) initRouter(g *gin.RouterGroup) {
 	g.GET("/allLinks", a.getAllInboundLinks)
 	g.GET("/get/:id", a.getInbound)
 	g.GET("/:id/fallbacks", a.getFallbacks)
+	g.GET("/amneziawgKernelReadiness", a.getAmneziaWGKernelReadiness)
 
 	g.POST("/add", a.addInbound)
 	g.POST("/del/:id", a.delInbound)
@@ -124,6 +127,16 @@ func (a *InboundController) getInboundsSlim(c *gin.Context) {
 // remark template (name-only display part) is applied consistently.
 func (a *InboundController) getAllInboundLinks(c *gin.Context) {
 	user := session.GetLoginUser(c)
+	if _, present := c.Request.URL.Query()["inboundId"]; present {
+		id, err := strconv.Atoi(c.Query("inboundId"))
+		if err != nil || id <= 0 {
+			jsonMsg(c, I18nWeb(c, "somethingWentWrong"), strconv.ErrSyntax)
+			return
+		}
+		links, err := a.inboundService.GetInboundLinks(resolveHost(c), user.Id, id)
+		jsonObj(c, links, err)
+		return
+	}
 	links, err := a.inboundService.GetAllInboundLinks(resolveHost(c), user.Id)
 	if err != nil {
 		jsonMsg(c, I18nWeb(c, "pages.inbounds.toasts.obtain"), err)
@@ -143,6 +156,12 @@ func (a *InboundController) getInboundOptions(c *gin.Context) {
 		return
 	}
 	jsonObj(c, options, nil)
+}
+
+// getAmneziaWGKernelReadiness reports whether this host can run an AmneziaWG
+// inbound on the kernel module, so the form can disable the toggle and say why.
+func (a *InboundController) getAmneziaWGKernelReadiness(c *gin.Context) {
+	jsonObj(c, amneziawgkern.HostReadiness(), nil)
 }
 
 // getInbound retrieves a specific inbound by its ID.

@@ -54,6 +54,7 @@ func migrationModels() []any {
 		&model.ClientGroup{},
 		&model.InboundFallback{},
 		&model.Host{},
+		&model.HostTombstone{},
 		&model.NodeClientTraffic{},
 		&model.NodeClientIp{},
 		&model.ClientGlobalTraffic{},

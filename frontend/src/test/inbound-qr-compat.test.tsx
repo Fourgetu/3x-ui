@@ -68,6 +68,21 @@ describe('inbound QR compatibility with upstream 3.10', () => {
     ).toBe(true);
   });
 
+  it('uses authorized server links and keeps an empty binding closed', () => {
+    const props = {
+      open: true,
+      onClose: () => {},
+      dbInbound: realityFixture,
+      clients: realityFixture.settings.clients,
+      protocolOnly: true,
+    };
+    const authorized = 'vless://uuid@bound.example.test:35001#limited';
+    const { rerender } = render(<QrCodeModal {...props} serverLinks={[authorized]} />);
+    expect(screen.getByTestId('share-link').textContent).toBe(authorized);
+    rerender(<QrCodeModal {...props} serverLinks={[]} />);
+    expect(screen.queryByTestId('share-link')).toBeNull();
+  });
+
   it('uses the official oversized post-quantum key rule in the retained modal', () => {
     const inbound = structuredClone(realityFixture);
     inbound.streamSettings.realitySettings.settings.mldsa65Verify = 'B'.repeat(2603);

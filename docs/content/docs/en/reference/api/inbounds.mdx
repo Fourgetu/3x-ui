@@ -34,17 +34,33 @@ _openapi:
         clients.
       url: '#lightweight-picker-projection-of-the-authenticated-users-inbounds-returns-id-remark-tag-protocol-port-a-server-computed-tlsflowcapable-flag-true-for-vless-on-tcp-with-tls-or-reality-or-on-xhttp-with-vless-encryption--vlessenc-enabled-and-ssmethod-the-shadowsocks-cipher-empty-for-non-shadowsocks-inbounds--used-by-the-client-ui-to-generate-a-valid-shadowsocks-2022-psk-use-this-for-dropdowns-and-attach-pickers--it-skips-settings-streamsettings-and-clientstats-so-the-payload-stays-small-even-on-panels-with-thousands-of-clients'
     - depth: 2
+      title: Whether this host can run an AmneziaWG inbound on the kernel module.
+        Returns ready, host blocker codes (root/tools/module/nft), and the
+        command that fixes them. Saving an inbound also checks its features and
+        rejects IPv6, port forwarding, routeThroughXray, or a pinned listen
+        address that the kernel backend cannot honor.
+      url: '#whether-this-host-can-run-an-amneziawg-inbound-on-the-kernel-module-returns-ready-host-blocker-codes-roottoolsmodulenft-and-the-command-that-fixes-them-saving-an-inbound-also-checks-its-features-and-rejects-ipv6-port-forwarding-routethroughxray-or-a-pinned-listen-address-that-the-kernel-backend-cannot-honor'
+    - depth: 2
       title: Return every protocol URL (vless://, vmess://, trojan://, ss://,
         hysteria://, mtproto) across all inbounds and all of their clients.
         Links are rendered through the subscription engine, so the configured
         remark template (name-only display part) is applied per client — the
         same output the client info/QR pages use. Protocols without a URL form
         (socks, http, mixed, wireguard, dokodemo, tunnel) contribute nothing.
-        Used by the panel’s "Export all inbound links" action.
-      url: '#return-every-protocol-url-vless-vmess-trojan-ss-hysteria-mtproto-across-all-inbounds-and-all-of-their-clients-links-are-rendered-through-the-subscription-engine-so-the-configured-remark-template-name-only-display-part-is-applied-per-client--the-same-output-the-client-infoqr-pages-use-protocols-without-a-url-form-socks-http-mixed-wireguard-dokodemo-tunnel-contribute-nothing-used-by-the-panels-export-all-inbound-links-action'
+        Used by the panel’s "Export all inbound links" action. Optional query
+        inboundId (positive integer) restricts output to one inbound owned by
+        the authenticated user, for its multi-client QR shortcut; this also
+        applies client Host bindings and speed ports.
+      url: '#return-every-protocol-url-vless-vmess-trojan-ss-hysteria-mtproto-across-all-inbounds-and-all-of-their-clients-links-are-rendered-through-the-subscription-engine-so-the-configured-remark-template-name-only-display-part-is-applied-per-client--the-same-output-the-client-infoqr-pages-use-protocols-without-a-url-form-socks-http-mixed-wireguard-dokodemo-tunnel-contribute-nothing-used-by-the-panels-export-all-inbound-links-action-optional-query-inboundid-positive-integer-restricts-output-to-one-inbound-owned-by-the-authenticated-user-for-its-multi-client-qr-shortcut-this-also-applies-client-host-bindings-and-speed-ports'
     - depth: 2
       title: Fetch a single inbound by numeric ID.
       url: '#fetch-a-single-inbound-by-numeric-id'
+    - depth: 2
+      title: Return the number of orphan clients attached to an inbound.
+      url: '#return-the-number-of-orphan-clients-attached-to-an-inbound'
+    - depth: 2
+      title: Return orphan-client counts for a set of inbound IDs.
+      url: '#return-orphan-client-counts-for-a-set-of-inbound-ids'
     - depth: 2
       title: Create a new inbound. Send the full inbound payload (protocol, port,
         settings, streamSettings, sniffing, remark, expiryTime, total, enable).
@@ -131,16 +147,29 @@ _openapi:
           clientStats so the payload stays small even on panels with thousands
           of clients.
         id: lightweight-picker-projection-of-the-authenticated-users-inbounds-returns-id-remark-tag-protocol-port-a-server-computed-tlsflowcapable-flag-true-for-vless-on-tcp-with-tls-or-reality-or-on-xhttp-with-vless-encryption--vlessenc-enabled-and-ssmethod-the-shadowsocks-cipher-empty-for-non-shadowsocks-inbounds--used-by-the-client-ui-to-generate-a-valid-shadowsocks-2022-psk-use-this-for-dropdowns-and-attach-pickers--it-skips-settings-streamsettings-and-clientstats-so-the-payload-stays-small-even-on-panels-with-thousands-of-clients
+      - content: Whether this host can run an AmneziaWG inbound on the kernel module.
+          Returns ready, host blocker codes (root/tools/module/nft), and the
+          command that fixes them. Saving an inbound also checks its features
+          and rejects IPv6, port forwarding, routeThroughXray, or a pinned
+          listen address that the kernel backend cannot honor.
+        id: whether-this-host-can-run-an-amneziawg-inbound-on-the-kernel-module-returns-ready-host-blocker-codes-roottoolsmodulenft-and-the-command-that-fixes-them-saving-an-inbound-also-checks-its-features-and-rejects-ipv6-port-forwarding-routethroughxray-or-a-pinned-listen-address-that-the-kernel-backend-cannot-honor
       - content: Return every protocol URL (vless://, vmess://, trojan://, ss://,
           hysteria://, mtproto) across all inbounds and all of their clients.
           Links are rendered through the subscription engine, so the configured
           remark template (name-only display part) is applied per client — the
           same output the client info/QR pages use. Protocols without a URL form
           (socks, http, mixed, wireguard, dokodemo, tunnel) contribute nothing.
-          Used by the panel’s "Export all inbound links" action.
-        id: return-every-protocol-url-vless-vmess-trojan-ss-hysteria-mtproto-across-all-inbounds-and-all-of-their-clients-links-are-rendered-through-the-subscription-engine-so-the-configured-remark-template-name-only-display-part-is-applied-per-client--the-same-output-the-client-infoqr-pages-use-protocols-without-a-url-form-socks-http-mixed-wireguard-dokodemo-tunnel-contribute-nothing-used-by-the-panels-export-all-inbound-links-action
+          Used by the panel’s "Export all inbound links" action. Optional query
+          inboundId (positive integer) restricts output to one inbound owned by
+          the authenticated user, for its multi-client QR shortcut; this also
+          applies client Host bindings and speed ports.
+        id: return-every-protocol-url-vless-vmess-trojan-ss-hysteria-mtproto-across-all-inbounds-and-all-of-their-clients-links-are-rendered-through-the-subscription-engine-so-the-configured-remark-template-name-only-display-part-is-applied-per-client--the-same-output-the-client-infoqr-pages-use-protocols-without-a-url-form-socks-http-mixed-wireguard-dokodemo-tunnel-contribute-nothing-used-by-the-panels-export-all-inbound-links-action-optional-query-inboundid-positive-integer-restricts-output-to-one-inbound-owned-by-the-authenticated-user-for-its-multi-client-qr-shortcut-this-also-applies-client-host-bindings-and-speed-ports
       - content: Fetch a single inbound by numeric ID.
         id: fetch-a-single-inbound-by-numeric-id
+      - content: Return the number of orphan clients attached to an inbound.
+        id: return-the-number-of-orphan-clients-attached-to-an-inbound
+      - content: Return orphan-client counts for a set of inbound IDs.
+        id: return-orphan-client-counts-for-a-set-of-inbound-ids
       - content: Create a new inbound. Send the full inbound payload (protocol, port,
           settings, streamSettings, sniffing, remark, expiryTime, total,
           enable). settings, streamSettings, and sniffing may be sent as nested
@@ -197,13 +226,11 @@ _openapi:
 {/* This file was generated by Fumadocs. Do not edit this file directly. Any changes should be made by running the generation command again. */}
 
 export default function Layout(props) {
-  const { APIPage, OpenAPIPage } = props.components ?? {};
-  // "APIPage" is the old name from v10, this allows both for backward compatibility
-  const Comp = OpenAPIPage ?? APIPage;
+  const { OpenAPIPage } = props.components ?? {};
   return (
     <>
       {props.children}
-      <Comp document="./public/openapi.json" webhooks={[]} operations={[{"path":"/panel/api/inbounds/list","method":"get"},{"path":"/panel/api/inbounds/list/slim","method":"get"},{"path":"/panel/api/inbounds/options","method":"get"},{"path":"/panel/api/inbounds/allLinks","method":"get"},{"path":"/panel/api/inbounds/get/{id}","method":"get"},{"path":"/panel/api/inbounds/add","method":"post"},{"path":"/panel/api/inbounds/del/{id}","method":"post"},{"path":"/panel/api/inbounds/bulkDel","method":"post"},{"path":"/panel/api/inbounds/update/{id}","method":"post"},{"path":"/panel/api/inbounds/setEnable/{id}","method":"post"},{"path":"/panel/api/inbounds/{id}/subSortIndex","method":"post"},{"path":"/panel/api/inbounds/{id}/resetTraffic","method":"post"},{"path":"/panel/api/inbounds/{id}/delAllClients","method":"post"},{"path":"/panel/api/inbounds/resetAllTraffics","method":"post"},{"path":"/panel/api/inbounds/import","method":"post"},{"path":"/panel/api/inbounds/pushClientTraffics","method":"post"},{"path":"/panel/api/inbounds/{id}/fallbacks","method":"get"},{"path":"/panel/api/inbounds/{id}/fallbacks","method":"post"}]} showTitle />
+      <OpenAPIPage document="./public/openapi.json" webhooks={[]} operations={[{"path":"/panel/api/inbounds/list","method":"get"},{"path":"/panel/api/inbounds/list/slim","method":"get"},{"path":"/panel/api/inbounds/options","method":"get"},{"path":"/panel/api/inbounds/amneziawgKernelReadiness","method":"get"},{"path":"/panel/api/inbounds/allLinks","method":"get"},{"path":"/panel/api/inbounds/get/{id}","method":"get"},{"path":"/panel/api/inbounds/{id}/orphanCount","method":"get"},{"path":"/panel/api/inbounds/orphanCountBatch","method":"post"},{"path":"/panel/api/inbounds/add","method":"post"},{"path":"/panel/api/inbounds/del/{id}","method":"post"},{"path":"/panel/api/inbounds/bulkDel","method":"post"},{"path":"/panel/api/inbounds/update/{id}","method":"post"},{"path":"/panel/api/inbounds/setEnable/{id}","method":"post"},{"path":"/panel/api/inbounds/{id}/subSortIndex","method":"post"},{"path":"/panel/api/inbounds/{id}/resetTraffic","method":"post"},{"path":"/panel/api/inbounds/{id}/delAllClients","method":"post"},{"path":"/panel/api/inbounds/resetAllTraffics","method":"post"},{"path":"/panel/api/inbounds/import","method":"post"},{"path":"/panel/api/inbounds/pushClientTraffics","method":"post"},{"path":"/panel/api/inbounds/{id}/fallbacks","method":"get"},{"path":"/panel/api/inbounds/{id}/fallbacks","method":"post"}]} showTitle />
     </>
   );
 }

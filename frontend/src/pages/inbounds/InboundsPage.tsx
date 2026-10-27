@@ -171,6 +171,7 @@ export default function InboundsPage() {
   const [infoClientIndex, setInfoClientIndex] = useState(0);
 
   const [qrOpen, setQrOpen] = useState(false);
+  const [qrServerLinks, setQrServerLinks] = useState<string[] | undefined>(undefined);
   const [qrDbInbound, setQrDbInbound] = useState<DBInbound | null>(null);
   const [qrClients, setQrClients] = useState<
     { email?: string; subId?: string; [k: string]: unknown }[] | null
@@ -707,6 +708,15 @@ export default function InboundsPage() {
           break;
         case 'qrcode':
           {
+            // Use the official subscription renderer for client Host bindings and
+            // speed ports. Tunnel config downloads still use their peer builders.
+            let serverLinks: string[] | undefined;
+            if (target.protocol !== 'wireguard' && target.protocol !== 'amneziawg') {
+              const msg = await HttpUtil.get(`/panel/api/inbounds/allLinks?inboundId=${target.id}`);
+              if (!msg?.success || (msg.obj != null && !Array.isArray(msg.obj))) return;
+              serverLinks = (msg.obj ?? []) as string[];
+            }
+            setQrServerLinks(serverLinks);
             const settings = coerceInboundJsonField(target.settings) as {
               clients?: { email?: string; subId?: string; [k: string]: unknown }[];
             };
@@ -818,9 +828,11 @@ export default function InboundsPage() {
                             value={0}
                             formatter={() => (
                               <span>
-                                <ArrowUpOutlined /> {SizeFormatter.sizeFormat(totals.up)}
+                                <ArrowUpOutlined aria-hidden />{' '}
+                                {SizeFormatter.sizeFormat(totals.up)}
                                 {' / '}
-                                <ArrowDownOutlined /> {SizeFormatter.sizeFormat(totals.down)}
+                                <ArrowDownOutlined aria-hidden />{' '}
+                                {SizeFormatter.sizeFormat(totals.down)}
                               </span>
                             )}
                           />
@@ -829,14 +841,14 @@ export default function InboundsPage() {
                           <Statistic
                             title={t('pages.inbounds.totalUsage')}
                             value={SizeFormatter.sizeFormat(totals.up + totals.down)}
-                            prefix={<PieChartOutlined />}
+                            prefix={<PieChartOutlined aria-hidden />}
                           />
                         </Col>
                         <Col xs={24} sm={24} md={8}>
                           <Statistic
                             title={t('pages.inbounds.inboundCount')}
                             value={String(dbInbounds.length)}
-                            prefix={<BarsOutlined />}
+                            prefix={<BarsOutlined aria-hidden />}
                           />
                         </Col>
                       </Row>
@@ -904,6 +916,7 @@ export default function InboundsPage() {
         <LazyMount when={qrOpen}>
           <QrCodeModal
             open={qrOpen}
+            serverLinks={qrServerLinks}
             onClose={() => setQrOpen(false)}
             dbInbound={qrDbInbound}
             client={null}

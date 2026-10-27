@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Collapse, Modal } from 'antd';
 import type { CollapseProps } from 'antd';
 
+import { parseLinkParts } from '@/lib/xray/link-label';
 import { Protocols } from '@/schemas/primitives';
 import {
   genAllLinks,
@@ -36,6 +37,7 @@ interface QrCodeModalProps {
   nodeAddress?: string;
   subSettings?: SubSettings;
   hosts?: HostRecord[];
+  serverLinks?: string[];
 }
 
 interface QrItem {
@@ -58,6 +60,7 @@ export default function QrCodeModal({
   nodeAddress = '',
   subSettings,
   hosts = EMPTY_HOSTS,
+  serverLinks,
 }: QrCodeModalProps) {
   const { t } = useTranslation();
   const [links, setLinks] = useState<{ remark?: string; link: string }[]>([]);
@@ -81,6 +84,7 @@ export default function QrCodeModal({
     nodeAddress: typeof nodeAddress;
     subSettings: typeof subSettings;
     hosts: typeof hosts;
+    serverLinks: typeof serverLinks;
   } | null>(null);
   if (
     open &&
@@ -92,9 +96,19 @@ export default function QrCodeModal({
       syncedProps.protocolOnly !== protocolOnly ||
       syncedProps.nodeAddress !== nodeAddress ||
       syncedProps.subSettings !== subSettings ||
-      syncedProps.hosts !== hosts)
+      syncedProps.hosts !== hosts ||
+      syncedProps.serverLinks !== serverLinks)
   ) {
-    setSyncedProps({ dbInbound, client, clients, protocolOnly, nodeAddress, subSettings, hosts });
+    setSyncedProps({
+      dbInbound,
+      client,
+      clients,
+      protocolOnly,
+      nodeAddress,
+      subSettings,
+      hosts,
+      serverLinks,
+    });
     const clientList = Array.isArray(clients) ? clients : client ? [client] : [];
     const fallbackHostname = preferPublicHost(
       window.location.hostname,
@@ -155,23 +169,29 @@ export default function QrCodeModal({
       setLinks([]);
     } else {
       setLinks(
-        clientList.length > 0
-          ? clientList.flatMap((item) =>
-              genAllLinks({
+        serverLinks !== undefined
+          ? serverLinks.map((link, index) => ({
+              link,
+              remark:
+                parseLinkParts(link)?.remark || `${dbInbound.remark || ''} ${index + 1}`.trim(),
+            }))
+          : clientList.length > 0
+            ? clientList.flatMap((item) =>
+                genAllLinks({
+                  inbound,
+                  remark: [dbInbound.remark || '', item.email || ''].filter(Boolean).join('-'),
+                  client: item,
+                  hostOverride: nodeAddress,
+                  fallbackHostname,
+                }),
+              )
+            : genAllLinks({
                 inbound,
-                remark: [dbInbound.remark || '', item.email || ''].filter(Boolean).join('-'),
-                client: item,
+                remark: dbInbound.remark || '',
+                client: client ?? {},
                 hostOverride: nodeAddress,
                 fallbackHostname,
               }),
-            )
-          : genAllLinks({
-              inbound,
-              remark: dbInbound.remark || '',
-              client: client ?? {},
-              hostOverride: nodeAddress,
-              fallbackHostname,
-            }),
       );
       setWireguardConfigs([]);
       setWireguardLinks([]);

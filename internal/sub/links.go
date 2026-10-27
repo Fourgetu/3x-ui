@@ -39,9 +39,16 @@ func (p *LinkProvider) LinksForClient(host string, inbound *model.Inbound, email
 	svc := p.build(host)
 	svc.projectThroughFallbackMaster(inbound)
 	clientInbound, speedPort := svc.withClientSpeedPort(inbound, email)
-	if endpoints := svc.hostEndpoints(inbound, "raw"); len(endpoints) > 0 {
-		if client, ok := svc.clientForLink(clientInbound, email); ok {
-			return splitLinkLines(svc.linkFromHosts(clientInbound, client, forceEndpointPort(endpoints, speedPort)))
+	baseEps := svc.hostEndpoints(inbound, "raw")
+	if client, ok := svc.clientForLink(inbound, email); ok {
+		effectiveEps, bound := svc.clientHostEndpoints(inbound, client, "raw", baseEps)
+		if bound && len(effectiveEps) == 0 {
+			return nil
+		}
+		if len(effectiveEps) > 0 {
+			if link := svc.linkFromHosts(clientInbound, client, forceEndpointPort(effectiveEps, speedPort)); link != "" {
+				return splitLinkLines(link)
+			}
 		}
 	}
 	return splitLinkLines(svc.GetLink(clientInbound, email))

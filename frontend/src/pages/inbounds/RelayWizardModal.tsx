@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Alert,
@@ -67,6 +67,7 @@ export default function RelayWizardModal({
   dbInbounds,
 }: RelayWizardModalProps) {
   const { t } = useTranslation();
+  const uid = useId();
   const [messageApi, messageContextHolder] = message.useMessage();
   const [busy, setBusy] = useState(false);
 
@@ -338,9 +339,11 @@ export default function RelayWizardModal({
           {entryMode === 'existing' ? (
             <>
               <Form.Item
+                htmlFor={`${uid}-existingEntryId`}
                 label={t('pages.inbounds.relay.existingEntry', { defaultValue: '已有入口' })}
               >
                 <Select<number>
+                  id={`${uid}-existingEntryId`}
                   value={existingEntryId ?? undefined}
                   onChange={(value) => setExistingEntryId(value)}
                   placeholder={t('pages.inbounds.relay.selectExistingEntry', {
@@ -384,15 +387,23 @@ export default function RelayWizardModal({
                   }))}
                 />
               </Form.Item>
-              <Form.Item label={t('pages.inbounds.remark', { defaultValue: '备注' })}>
+              <Form.Item
+                htmlFor={`${uid}-remark`}
+                label={t('pages.inbounds.remark', { defaultValue: '备注' })}
+              >
                 <Input
+                  id={`${uid}-remark`}
                   value={remark}
                   onChange={(e) => setRemark(e.target.value)}
                   placeholder={t('pages.inbounds.relay.defaultRemark', { defaultValue: '中转' })}
                 />
               </Form.Item>
-              <Form.Item label={t('pages.inbounds.relay.entryPort', { defaultValue: '入口端口' })}>
+              <Form.Item
+                htmlFor={`${uid}-port`}
+                label={t('pages.inbounds.relay.entryPort', { defaultValue: '入口端口' })}
+              >
                 <InputNumber
+                  id={`${uid}-port`}
                   min={1}
                   max={65535}
                   value={port}
@@ -409,9 +420,11 @@ export default function RelayWizardModal({
         </Divider>
         <Form colon={false} labelCol={{ span: 6 }} wrapperCol={{ span: 18 }}>
           <Form.Item
+            htmlFor={`${uid}-landingProtocol`}
             label={t('pages.inbounds.relay.landingProtocol', { defaultValue: '落地协议' })}
           >
             <Select
+              id={`${uid}-landingProtocol`}
               value={landingProtocol}
               onChange={(v) => setLandingProtocol(v)}
               options={LANDING_PROTOCOLS}
@@ -433,8 +446,12 @@ export default function RelayWizardModal({
           )}
 
           {effectiveMode === 'link' ? (
-            <Form.Item label={t('pages.inbounds.relay.landingLink', { defaultValue: '落地链接' })}>
+            <Form.Item
+              htmlFor={`${uid}-link`}
+              label={t('pages.inbounds.relay.landingLink', { defaultValue: '落地链接' })}
+            >
               <Input.TextArea
+                id={`${uid}-link`}
                 value={link}
                 onChange={(e) => setLink(e.target.value)}
                 rows={3}
@@ -444,21 +461,25 @@ export default function RelayWizardModal({
           ) : (
             <>
               <Form.Item
+                htmlFor={`${uid}-address`}
                 label={t('pages.inbounds.relay.landingAddress', { defaultValue: '落地地址' })}
                 extra={t('pages.inbounds.relay.landingAddressHint', {
                   defaultValue: '可直接粘 host:port 或 host:port:用户名:密码，自动拆分',
                 })}
               >
                 <Input
+                  id={`${uid}-address`}
                   value={address}
                   onChange={(e) => onLandingAddressChange(e.target.value)}
                   placeholder="1.2.3.4  或  1.2.3.4:1080:user:pass"
                 />
               </Form.Item>
               <Form.Item
+                htmlFor={`${uid}-landingPort`}
                 label={t('pages.inbounds.relay.landingPort', { defaultValue: '落地端口' })}
               >
                 <InputNumber
+                  id={`${uid}-landingPort`}
                   min={1}
                   max={65535}
                   value={landingPort}
@@ -467,8 +488,9 @@ export default function RelayWizardModal({
                 />
               </Form.Item>
               {(landingProtocol === 'vless' || landingProtocol === 'vmess') && (
-                <Form.Item label="UUID">
+                <Form.Item htmlFor={`${uid}-uuid`} label="UUID">
                   <Input
+                    id={`${uid}-uuid`}
                     value={uuid}
                     onChange={(e) => setUuid(e.target.value)}
                     placeholder="客户端 UUID"
@@ -477,15 +499,24 @@ export default function RelayWizardModal({
               )}
               {landingProtocol === 'trojan' && (
                 <Form.Item
+                  htmlFor={`${uid}-password`}
                   label={t('pages.inbounds.relay.passwordLabel', { defaultValue: '密码' })}
                 >
-                  <Input value={password} onChange={(e) => setPassword(e.target.value)} />
+                  <Input
+                    id={`${uid}-password`}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
                 </Form.Item>
               )}
               {landingProtocol === 'shadowsocks' && (
                 <>
-                  <Form.Item label={t('pages.inbounds.relay.method', { defaultValue: '加密方式' })}>
+                  <Form.Item
+                    htmlFor={`${uid}-ssMethod`}
+                    label={t('pages.inbounds.relay.method', { defaultValue: '加密方式' })}
+                  >
                     <Select
+                      id={`${uid}-ssMethod`}
                       value={ssMethod}
                       onChange={setSsMethod}
                       options={SS_METHODS.map((m) => ({ value: m, label: m }))}
@@ -493,27 +524,42 @@ export default function RelayWizardModal({
                     />
                   </Form.Item>
                   <Form.Item
+                    htmlFor={`${uid}-password`}
                     label={t('pages.inbounds.relay.passwordLabel', { defaultValue: '密码' })}
                   >
-                    <Input value={password} onChange={(e) => setPassword(e.target.value)} />
+                    <Input
+                      id={`${uid}-password`}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
                   </Form.Item>
                 </>
               )}
               {(landingProtocol === 'socks' || landingProtocol === 'http') && (
                 <>
                   <Form.Item
+                    htmlFor={`${uid}-user`}
                     label={t('pages.inbounds.relay.usernameOptional', {
                       defaultValue: '用户名（可选）',
                     })}
                   >
-                    <Input value={user} onChange={(e) => setUser(e.target.value)} />
+                    <Input
+                      id={`${uid}-user`}
+                      value={user}
+                      onChange={(e) => setUser(e.target.value)}
+                    />
                   </Form.Item>
                   <Form.Item
+                    htmlFor={`${uid}-pass`}
                     label={t('pages.inbounds.relay.passwordOptional', {
                       defaultValue: '密码（可选）',
                     })}
                   >
-                    <Input value={pass} onChange={(e) => setPass(e.target.value)} />
+                    <Input
+                      id={`${uid}-pass`}
+                      value={pass}
+                      onChange={(e) => setPass(e.target.value)}
+                    />
                   </Form.Item>
                 </>
               )}

@@ -285,10 +285,17 @@ export const sections: readonly Section[] = [
       },
       {
         method: 'GET',
+        path: '/panel/api/inbounds/amneziawgKernelReadiness',
+        responseSchema: 'Readiness',
+        summary:
+          'Whether this host can run an AmneziaWG inbound on the kernel module. Returns ready, host blocker codes (root/tools/module/nft), and the command that fixes them. Saving an inbound also checks its features and rejects IPv6, port forwarding, routeThroughXray, or a pinned listen address that the kernel backend cannot honor.',
+      },
+      {
+        method: 'GET',
         path: '/panel/api/inbounds/allLinks',
         responseObjectSchema: { type: 'array', nullable: true, items: { type: 'string' } },
         summary:
-          'Return every protocol URL (vless://, vmess://, trojan://, ss://, hysteria://, mtproto) across all inbounds and all of their clients. Links are rendered through the subscription engine, so the configured remark template (name-only display part) is applied per client — the same output the client info/QR pages use. Protocols without a URL form (socks, http, mixed, wireguard, dokodemo, tunnel) contribute nothing. Used by the panel’s "Export all inbound links" action.',
+          'Return every protocol URL (vless://, vmess://, trojan://, ss://, hysteria://, mtproto) across all inbounds and all of their clients. Links are rendered through the subscription engine, so the configured remark template (name-only display part) is applied per client — the same output the client info/QR pages use. Protocols without a URL form (socks, http, mixed, wireguard, dokodemo, tunnel) contribute nothing. Used by the panel’s "Export all inbound links" action. Optional query inboundId (positive integer) restricts output to one inbound owned by the authenticated user, for its multi-client QR shortcut; this also applies client Host bindings and speed ports.',
         response:
           '{\n  "success": true,\n  "obj": [\n    "vless://uuid@host:443?security=reality&...#Germany-alice",\n    "vmess://eyJ2IjoyLC..."\n  ]\n}',
       },
@@ -679,7 +686,8 @@ export const sections: readonly Section[] = [
       {
         method: 'POST',
         path: '/panel/api/server/updatePanel',
-        summary: 'Self-update the panel to the latest version. The server restarts on success.',
+        summary:
+          'Self-update the panel to the latest version. The server restarts on success. Bearer-token callers need admin or node-admin scope.',
         params: [
           {
             name: 'dev',
@@ -1156,6 +1164,35 @@ export const sections: readonly Section[] = [
         ],
         response:
           '{\n  "success": true,\n  "obj": {\n    "client": { "id": 1, "email": "alice@example.com", ... },\n    "inboundIds": [3, 5],\n    "externalLinks": [\n      { "id": 11, "kind": "link", "value": "vless://...", "remark": "DE", "enable": true, "expiryTime": 0 },\n      { "id": 12, "kind": "subscription", "value": "https://provider.example/sub/abc", "remark": "Provider", "enable": false, "expiryTime": 1767225600000, "namePrefix": "[zjh] ", "lastFetchAt": 1767220000000, "lastFetchError": "" }\n    ]\n  }\n}',
+      },
+      {
+        method: 'GET',
+        path: '/panel/api/clients/get/subId/:subId',
+        summary: 'Fetch clients by subscription ID.',
+        description:
+          'Matches the exact subscription ID and orders results by client ID. Returns an array of the same payloads as GET /clients/get/:email, since multiple clients can share a subscription ID. Includes disabled, expired and unattached clients. An unknown ID returns HTTP 200 with success:false, obj:null and a record-not-found message, matching the email lookup. Requires an admin token or a panel login session.',
+        params: [
+          {
+            name: 'subId',
+            in: 'path',
+            type: 'string',
+            desc: 'Exact subscription ID (URL-encoded).',
+          },
+        ],
+        responseObjectSchema: {
+          type: 'array',
+          nullable: true,
+          items: {
+            type: 'object',
+            properties: {
+              client: { $ref: '#/components/schemas/ClientRecord' },
+              inboundIds: { type: 'array', items: { type: 'integer' } },
+              externalLinks: { type: 'array', items: { type: 'object' } },
+              usedTraffic: { type: 'integer', format: 'int64' },
+              tunnelAllowedIPs: { type: 'object', additionalProperties: { type: 'string' } },
+            },
+          },
+        },
       },
       {
         method: 'GET',
@@ -1865,6 +1902,14 @@ export const sections: readonly Section[] = [
       },
       {
         method: 'GET',
+        path: '/panel/api/hosts/raw',
+        summary:
+          'List every host row with its numeric id, for id-based pickers such as the per-client host rule override.',
+        responseSchema: 'Host',
+        responseSchemaArray: true,
+      },
+      {
+        method: 'GET',
         path: '/panel/api/hosts/get/:groupId',
         summary: 'Fetch a single host group by Group ID.',
         params: [{ name: 'groupId', in: 'path', type: 'string', desc: 'Host Group ID.' }],
@@ -1917,7 +1962,8 @@ export const sections: readonly Section[] = [
       {
         method: 'POST',
         path: '/panel/api/hosts/reorder',
-        summary: 'Set host group sort order by the position of each groupId in the array.',
+        summary:
+          'Set host group sort order by the position of each groupId in the array. IDs must be unique and refer to existing groups; omitted groups follow in their previous order.',
         body: '{\n  "ids": ["abc-123", "def-456"]\n}',
       },
       {
@@ -2033,6 +2079,13 @@ export const sections: readonly Section[] = [
       },
       {
         method: 'POST',
+        path: '/panel/api/setting/tgBotCapabilities',
+        summary:
+          'Report what the configured bot can do. Inline mode is a BotFather switch, so the panel warns when it is off.',
+        responseSchema: 'TgBotCapabilities',
+      },
+      {
+        method: 'POST',
         path: '/panel/api/setting/testDiscord',
         summary: 'Test Discord bot connection by sending a test embed to the configured channel.',
         response: '{\n  "success": true,\n  "msg": "Test notification sent successfully"\n}',
@@ -2050,7 +2103,7 @@ export const sections: readonly Section[] = [
     id: 'api-tokens',
     title: 'API Tokens',
     description:
-      'Manage scoped Bearer tokens for programmatic auth. Tokens grant admin, monitor, or node-sync access, may expire, and are stored as SHA-256 hashes. The plaintext is returned only once at creation.',
+      'Manage scoped Bearer tokens for programmatic auth. admin grants the full panel API; monitor is read-only for status and metrics; node-sync manages node configuration without panel updates; node-admin adds panel self-update to node-sync. Tokens may expire and are stored as SHA-256 hashes. The plaintext is returned only once at creation.',
     endpoints: [
       {
         method: 'GET',
@@ -2058,7 +2111,7 @@ export const sections: readonly Section[] = [
         summary:
           'List every API token, enabled or not. The token value is never returned — only metadata.',
         response:
-          '{\n  "success": true,\n  "obj": [\n    {\n      "id": 1,\n      "name": "default",\n      "enabled": true,\n      "createdAt": 1736000000\n    }\n  ]\n}',
+          '{\n  "success": true,\n  "obj": [\n    {\n      "id": 1,\n      "name": "central-panel-a",\n      "enabled": true,\n      "createdAt": 1736000000,\n      "scope": "node-admin",\n      "expiresAt": 0\n    }\n  ]\n}',
       },
       {
         method: 'POST',
@@ -2076,7 +2129,8 @@ export const sections: readonly Section[] = [
             name: 'scope',
             in: 'body',
             type: 'string',
-            desc: 'admin (default), monitor, or node-sync.',
+            desc: 'admin (default), monitor, node-sync, or node-admin. node-admin inherits node-sync and may also start a panel update.',
+            enum: ['admin', 'monitor', 'node-sync', 'node-admin'],
             optional: true,
           },
           {
@@ -2087,7 +2141,7 @@ export const sections: readonly Section[] = [
             optional: true,
           },
         ],
-        body: '{\n  "name": "central-panel-a",\n  "scope": "node-sync",\n  "expiresAt": 1798761600000\n}',
+        body: '{\n  "name": "central-panel-a",\n  "scope": "node-admin",\n  "expiresAt": 1798761600000\n}',
         responseSchema: 'ApiTokenView',
         errorResponse:
           '{\n  "success": false,\n  "msg": "a token with that name already exists"\n}',
