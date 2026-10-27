@@ -1,6 +1,6 @@
 # Fourgetu v3.11.0 同步记录
 
-同步日期：2026-10-27（Asia/Shanghai）。候选版本：`3.11.0-fourgetu.1`。
+同步日期：2026-10-27（Asia/Shanghai）。发布版本：`3.11.0-fourgetu.1`。
 
 ## 官方基线与优先策略
 
@@ -33,12 +33,28 @@
 - 新增两种排序模式 × 六种 Host 状态 × 五种链接输出的兼容测试，验证限速与不限速客户端相互隔离，并重复请求覆盖设置缓存。
 - 新增单入站链接的归属校验测试；二维码服务端链接、空绑定、失败保护与快捷续期专项共 16 项通过。
 - 前端代码生成、TypeScript、Lint、格式检查、生产构建、Storybook 构建通过；生产依赖审计为 0 vulnerabilities。
-- 全量前端测试、Go Lint、云端 CI 与八平台发布核验结果在完成后追加。
+- 前端全量单元、组件与 Storybook 浏览器测试：221 个文件、2,083 项全部通过。
+- Go Lint（golangci-lint 2.15.0）为 0 issues；actionlint 和安装、更新、管理菜单、Docker 初始化脚本语法检查通过。
+- 文档类型、Lint、格式检查及 12 个文件 / 112 项测试通过。
+- 本机 Windows Go 测试链接器报告已有的多 manifest 合并警告，测试退出码为 0；正式 Windows 包另经云端构建和版本资源校验通过。
 
 ## 发布边界
 
-本记录初始提交为候选状态；通过云端验证和八平台产物校验后才提升稳定版。没有更新生产服务器。
+本记录初始提交为候选状态，现已通过云端验证和八平台产物校验，并提升为稳定版 / Latest。没有更新生产服务器。
 
 Docs Deploy 按原有设置保持手动禁用，Docs CI 保持启用。Docker 镜像工作流仍使用上游镜像仓库，独立于本次 GitHub 安装包发布。
 
 本地 `3x-ui-cn-installer/` 与 `release-download-v2/` 不纳入主仓库提交。
+
+## 云端发布核验
+
+- 发布标签 `v3.11.0-fourgetu.1` 固定于三方合并提交 `d9d7ee4c0cddb38c0446d3ff3924873f3f032002`。后续文档提交不移动此标签。
+- [发布源码 CI](https://github.com/Fourgetu/3x-ui/actions/runs/40527589825) 全部通过，涵盖 Go 全量、PostgreSQL、race、fuzz、节点 E2E、代码生成、Lint、漏洞扫描及前端全套验证。
+- [发布源码 Docs CI](https://github.com/Fourgetu/3x-ui/actions/runs/40527596991) 通过；主分支 CodeQL 也通过。
+- [八平台构建](https://github.com/Fourgetu/3x-ui/actions/runs/40529396309) 全部通过，包含 Windows 程序启动与版本资源检查。
+- [产物验证与上传](https://github.com/Fourgetu/3x-ui/actions/runs/40530404409) 通过：校验来源 SHA、八包及八个 SHA-256 文件、GOST 文件名，并实际启动 Linux amd64 面板、GOST 和 Xray。
+- 下载全部八个 SHA-256 文件，与 GitHub 附件摘要逐一核对一致。稳定版共 16 个附件。
+- [主分支 dev 构建](https://github.com/Fourgetu/3x-ui/actions/runs/40529397572) 通过。
+- 附带 Docker 工作流因未配置 Docker Hub 用户名和密码而失败，没有发布 Docker 镜像；不影响上述安装包。
+
+- [中文安装器同步](https://github.com/Fourgetu/3x-ui-cn-installer/actions/runs/40530764617) 成功，提交 `afc73a0`；本地与公开 raw 版本记录均为 `v3.11.0-fourgetu.1`。中文脚本语法与翻译回归通过。
