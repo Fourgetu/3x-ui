@@ -1,6 +1,6 @@
 import { lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Button, ConfigProvider, Layout, Modal, Result, Spin, message } from 'antd';
+import { Alert, Button, ConfigProvider, Layout, Modal, Result, Spin, message } from 'antd';
 import {
   CopyOutlined,
   CloudDownloadOutlined,
@@ -19,6 +19,7 @@ import {
 } from '@/models/status';
 import { useTheme } from '@/hooks/useTheme';
 import { useStatusQuery } from '@/api/queries/useStatusQuery';
+import { usePanelUpdateQuery } from '@/api/queries/usePanelUpdateQuery';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import AppSidebar from '@/layouts/AppSidebar';
 import { LazyMount } from '@/components/utility';
@@ -29,7 +30,6 @@ import ThroughputCard from './ThroughputCard';
 import ConnectionsCard from './ConnectionsCard';
 import SystemStrip from './SystemStrip';
 import { mean, peak, useOverviewHistory } from './useOverviewHistory';
-import type { PanelUpdateInfo } from './PanelUpdateModal';
 const JsonEditor = lazy(() => import('@/components/form/JsonEditor'));
 const PanelUpdateModal = lazy(() => import('./PanelUpdateModal'));
 const LogModal = lazy(() => import('./LogModal'));
@@ -53,11 +53,12 @@ export default function IndexPage() {
 
   const [accessLogEnable, setAccessLogEnable] = useState(false);
   const [devChannelEnable, setDevChannelEnable] = useState(false);
-  const [panelUpdateInfo, setPanelUpdateInfo] = useState<PanelUpdateInfo>({
-    currentVersion: '',
-    latestVersion: '',
-    updateAvailable: false,
-  });
+  const {
+    info: panelUpdateInfo,
+    checking: checkingUpdate,
+    error: updateCheckError,
+    refresh: checkPanelUpdate,
+  } = usePanelUpdateQuery();
 
   const basePath = window.X_UI_BASE_PATH || '';
 
@@ -86,9 +87,6 @@ export default function IndexPage() {
         setDevChannelEnable(!!msg.obj.devChannelEnable);
       }
     });
-    HttpUtil.get<PanelUpdateInfo>('/panel/api/server/getPanelUpdateInfo').then((msg) => {
-      if (msg?.success && msg.obj) setPanelUpdateInfo(msg.obj);
-    });
   }, []);
 
   const displayVersion = useMemo(
@@ -115,8 +113,7 @@ export default function IndexPage() {
     const res = await HttpUtil.post('/panel/api/server/setUpdateChannel', { dev });
     if (!res?.success) return;
     setDevChannelEnable(dev);
-    const msg = await HttpUtil.get<PanelUpdateInfo>('/panel/api/server/getPanelUpdateInfo');
-    if (msg?.success && msg.obj) setPanelUpdateInfo(msg.obj);
+    await checkPanelUpdate();
   }
 
   async function openConfig() {
@@ -209,9 +206,25 @@ export default function IndexPage() {
                     onOpenBackup={() => setBackupOpen(true)}
                     onOpenSystemHistory={() => setSysHistoryOpen(true)}
                     onOpenXrayMetrics={() => setXrayMetricsOpen(true)}
-                    onOpenPanelUpdate={() => setPanelUpdateOpen(true)}
+                    onOpenPanelUpdate={() => {
+                      setPanelUpdateOpen(true);
+                      void checkPanelUpdate();
+                    }}
                     onOpenVersionSwitch={() => setVersionOpen(true)}
                   />
+
+                  {updateCheckError && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      title={t('pages.index.panelUpdateCheckFailed')}
+                      action={
+                        <Button size="small" onClick={() => setPanelUpdateOpen(true)}>
+                          {t('info')}
+                        </Button>
+                      }
+                    />
+                  )}
 
                   {health && (
                     <div className="ov-health" style={{ color: health.color }}>
@@ -307,6 +320,9 @@ export default function IndexPage() {
           <PanelUpdateModal
             open={panelUpdateOpen}
             info={panelUpdateInfo}
+            checking={checkingUpdate}
+            checkError={updateCheckError}
+            onCheck={() => checkPanelUpdate()}
             devChannelEnable={devChannelEnable}
             onChannelChange={handleChannelChange}
             onClose={() => setPanelUpdateOpen(false)}

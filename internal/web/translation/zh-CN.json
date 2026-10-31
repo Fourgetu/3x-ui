@@ -154,6 +154,7 @@
       "currentPanelVersion": "当前面板版本",
       "latestPanelVersion": "最新面板版本",
       "panelUpToDate": "面板已是最新",
+      "panelUpdateCheckFailed": "无法检查面板更新，请重试或检查服务器到 GitHub 的连接。",
       "devChannel": "开发通道",
       "devChannelWarning": "开发版会跟踪 main 的每次提交，并非稳定版本，且无法自动降级。",
       "currentCommit": "当前提交",

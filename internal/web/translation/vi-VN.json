@@ -154,6 +154,7 @@
       "currentPanelVersion": "Phiên bản panel hiện tại",
       "latestPanelVersion": "Phiên bản panel mới nhất",
       "panelUpToDate": "Panel đã được cập nhật",
+      "panelUpdateCheckFailed": "Không thể kiểm tra bản cập nhật. Hãy thử lại hoặc kiểm tra kết nối máy chủ đến GitHub.",
       "devChannel": "Kênh phát triển",
       "devChannelWarning": "Bản dev bám theo từng commit trên main và không phải bản ổn định — không có hạ cấp tự động.",
       "currentCommit": "Commit hiện tại",

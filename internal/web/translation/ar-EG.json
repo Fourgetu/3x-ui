@@ -154,6 +154,7 @@
       "currentPanelVersion": "إصدار البانل الحالي",
       "latestPanelVersion": "أحدث إصدار للبانل",
       "panelUpToDate": "البانل محدث لآخر إصدار",
+      "panelUpdateCheckFailed": "تعذر التحقق من تحديثات اللوحة. أعد المحاولة أو تحقق من اتصال الخادم بـ GitHub.",
       "devChannel": "قناة التطوير",
       "devChannelWarning": "تتابع نسخ التطوير كل كومِت على main وليست إصدارات مستقرة — لا يوجد رجوع تلقائي لإصدار أقدم.",
       "currentCommit": "الكومِت الحالي",

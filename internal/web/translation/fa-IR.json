@@ -154,6 +154,7 @@
       "currentPanelVersion": "نسخه فعلی پنل",
       "latestPanelVersion": "آخرین نسخه پنل",
       "panelUpToDate": "پنل به‌روز است",
+      "panelUpdateCheckFailed": "بررسی به‌روزرسانی پنل ناموفق بود. دوباره تلاش کنید یا اتصال سرور به GitHub را بررسی کنید.",
       "devChannel": "کانال توسعه (Dev)",
       "devChannelWarning": "بیلدهای توسعه هر کامیت روی main را دنبال می‌کنند و نسخهٔ پایدار نیستند — بازگشت خودکار به نسخهٔ قبلی وجود ندارد.",
       "currentCommit": "کامیت فعلی",

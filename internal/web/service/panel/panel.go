@@ -437,40 +437,38 @@ func downloadPanelUpdater(tag string) (string, error) {
 }
 
 func fetchLatestPanelVersion() (string, error) {
-	release, err := fetchPanelRelease("")
-	if err != nil {
-		return "", err
-	}
-	if release.TagName == "" {
-		return "", fmt.Errorf("latest panel release tag is empty")
-	}
-	return release.TagName, nil
+	client := (&service.SettingService{}).NewProxiedHTTPClient(10 * time.Second)
+	return fetchLatestPanelVersionWithClient(client)
 }
 
 // fetchPanelRelease fetches a release from GitHub. An empty tag resolves the
 // latest stable release; a non-empty tag (e.g. dev-latest) resolves that tag.
 func fetchPanelRelease(tag string) (*service.Release, error) {
+	client := (&service.SettingService{}).NewProxiedHTTPClient(10 * time.Second)
+	return fetchPanelReleaseWithClient(client, tag)
+}
+
+func fetchPanelReleaseWithClient(client *http.Client, tag string) (*service.Release, error) {
 	url := "https://api.github.com/repos/" + panelRepository + "/releases/latest"
 	if tag != "" {
 		url = "https://api.github.com/repos/" + panelRepository + "/releases/tags/" + tag
 	}
-	client := (&service.SettingService{}).NewProxiedHTTPClient(10 * time.Second)
 	req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if reqErr != nil {
 		return nil, reqErr
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("GitHub API: %s", releaseNetworkError(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned status %d: %s", resp.StatusCode, resp.Status)
+		return nil, fmt.Errorf("GitHub API HTTP %d", resp.StatusCode)
 	}
 
 	var release service.Release
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("GitHub API returned invalid release data")
 	}
 	return &release, nil
 }

@@ -154,6 +154,7 @@
       "currentPanelVersion": "Versión actual del panel",
       "latestPanelVersion": "Última versión del panel",
       "panelUpToDate": "El panel está actualizado",
+      "panelUpdateCheckFailed": "No se pudieron comprobar las actualizaciones. Reintenta o revisa la conexión del servidor a GitHub.",
       "devChannel": "Canal de desarrollo",
       "devChannelWarning": "Las compilaciones de desarrollo siguen cada commit en main y no son versiones estables; no hay reversión automática.",
       "currentCommit": "Commit actual",

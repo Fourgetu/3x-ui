@@ -154,6 +154,7 @@
       "currentPanelVersion": "Current panel version",
       "latestPanelVersion": "Latest panel version",
       "panelUpToDate": "Panel is up to date",
+      "panelUpdateCheckFailed": "Unable to check for panel updates. Retry or check the server connection to GitHub.",
       "devChannel": "Dev channel",
       "devChannelWarning": "Dev builds track every commit on main and aren't stable releases — there is no automatic downgrade.",
       "currentCommit": "Current commit",

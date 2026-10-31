@@ -27,6 +27,9 @@ interface BusyEvent {
 interface PanelUpdateModalProps {
   open: boolean;
   info: PanelUpdateInfo;
+  checking?: boolean;
+  checkError?: string;
+  onCheck?: () => Promise<unknown>;
   devChannelEnable?: boolean;
   onChannelChange?: (dev: boolean) => void | Promise<void>;
   onClose: () => void;
@@ -36,6 +39,9 @@ interface PanelUpdateModalProps {
 export default function PanelUpdateModal({
   open,
   info,
+  checking = false,
+  checkError = '',
+  onCheck,
   devChannelEnable,
   onChannelChange,
   onClose,
@@ -132,7 +138,16 @@ export default function PanelUpdateModal({
     <>
       {contextHolder}
       <Modal open={open} title={t('pages.index.updatePanel')} footer={null} onCancel={onClose}>
-        {info.updateAvailable && (
+        {checkError && (
+          <Alert
+            type="error"
+            className="mb-12"
+            title={t('pages.index.panelUpdateCheckFailed')}
+            description={checkError}
+            showIcon
+          />
+        )}
+        {info.updateAvailable && !checkError && !checking && (
           <Alert
             type="warning"
             className="mb-12"
@@ -148,6 +163,7 @@ export default function PanelUpdateModal({
               aria-label={t('pages.index.devChannel')}
               checked={!!devChannelEnable}
               loading={channelBusy}
+              disabled={checking}
               onChange={handleChannel}
             />
           </div>
@@ -175,7 +191,12 @@ export default function PanelUpdateModal({
               </Tag>
             )}
           </div>
-          {info.updateAvailable ? (
+          {checking || checkError || !info.latestVersion ? (
+            <div className="version-list-item">
+              <span>{t('pages.index.latestPanelVersion')}</span>
+              <Tag>{t(checking ? 'loading' : checkError ? 'fail' : 'noData')}</Tag>
+            </div>
+          ) : info.updateAvailable ? (
             <div className="version-list-item">
               <span>
                 {isDev ? t('pages.index.latestCommit') : t('pages.index.latestPanelVersion')}
@@ -191,9 +212,19 @@ export default function PanelUpdateModal({
         </div>
 
         <div className="actions-row">
+          {onCheck && (
+            <Button
+              aria-label={t('refresh')}
+              loading={checking}
+              disabled={channelBusy}
+              onClick={() => void onCheck()}
+            >
+              {t('refresh')}
+            </Button>
+          )}
           <Button
             type="primary"
-            disabled={!info.updateAvailable}
+            disabled={checking || !!checkError || channelBusy || !info.updateAvailable}
             onClick={updatePanel}
             icon={<CloudDownloadOutlined aria-hidden />}
           >

@@ -109,7 +109,7 @@ x-ui
 安装指定版本时，将版本标签作为参数传入中文安装脚本，例如：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Fourgetu/3x-ui-cn-installer/main/install-cn.sh) v3.11.0-fourgetu.3
+bash <(curl -fsSL https://raw.githubusercontent.com/Fourgetu/3x-ui-cn-installer/main/install-cn.sh) v3.11.0-fourgetu.4
 ```
 
 ### 更新和查看版本
@@ -125,7 +125,7 @@ Every release asset is published with a `.sha256` sum next to it. Both `install.
 
 For full documentation — installation, configuration, operations, and the complete API reference — visit **[docs.sanaei.dev](https://docs.sanaei.dev)**.
 
-本版为 `v3.11.0-fourgetu.3`，基于官方 `v3.11.0`。移除登录页和系统状态页广告、赞助商页面及捐赠入口，并禁用广告内容和图片代理。已适配官方 Host 绑定、订阅缓存及链接生成，保留用户级限速、中转向导、推荐模板、多客户端二维码和自然月快捷续期。去广告范围见 [面板去广告定制](docs/ad-free-panel.md)，官方同步验证见 [v3.11.0 同步记录](docs/upstream-v3.11.0-sync.md)。
+本版为 `v3.11.0-fourgetu.4`，基于官方 `v3.11.0`。修正侧栏仓库链接，完善更新检查失败提示、手动刷新和正式发布页备用查询，详见 [更新检查修复](docs/panel-update-detection.md)。保留去广告、用户级限速、中转向导、推荐模板、多客户端二维码和自然月快捷续期。去广告范围见 [面板去广告定制](docs/ad-free-panel.md)，官方同步验证见 [v3.11.0 同步记录](docs/upstream-v3.11.0-sync.md)。
 
 兼容处理和验证结果见 [v3.11.0 同步记录](docs/upstream-v3.11.0-sync.md)。构建要求：Go 1.27.3、Node 26 / npm 11、CGO C 编译器；Xray 使用官方 v26.10.21。
 

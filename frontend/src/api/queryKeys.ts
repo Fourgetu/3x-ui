@@ -1,5 +1,6 @@
 export const keys = {
   server: {
+    panelUpdate: () => ['server', 'panelUpdate'] as const,
     status: () => ['server', 'status'] as const,
     fail2banStatus: () => ['server', 'fail2banStatus'] as const,
   },
