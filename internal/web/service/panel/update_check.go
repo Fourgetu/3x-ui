@@ -25,7 +25,7 @@ func fetchLatestPanelVersionWithClient(client *http.Client) (string, error) {
 	}
 	tag, err := fetchLatestPanelRedirect(client)
 	if err != nil {
-		return "", fmt.Errorf("%v; %w", apiErr, err)
+		return "", fmt.Errorf("%w; %w", apiErr, err)
 	}
 	return tag, nil
 }
