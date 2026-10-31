@@ -240,8 +240,9 @@ export const sections: readonly Section[] = [
         method: 'GET',
         path: '/sponsors',
         summary:
-          'Public. Active paid sponsor placements read from the project sponsors.json (cached for 1h); entries outside their from/until window are dropped. Logos are proxied by the panel at /sponsors/logo/{name}. Used by the login page and panel sponsor slots.',
+          'Legacy compatibility endpoint. This build always returns an empty sponsors array without fetching remote content. Sponsor logo requests return 404.',
         responseSchema: 'SponsorList',
+        response: '{\n  "success": true,\n  "obj": { "sponsors": [] }\n}',
       },
       {
         method: 'POST',

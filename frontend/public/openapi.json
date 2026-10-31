@@ -5375,7 +5375,7 @@
         "tags": [
           "Authentication"
         ],
-        "summary": "Public. Active paid sponsor placements read from the project sponsors.json (cached for 1h); entries outside their from/until window are dropped. Logos are proxied by the panel at /sponsors/logo/{name}. Used by the login page and panel sponsor slots.",
+        "summary": "Legacy compatibility endpoint. This build always returns an empty sponsors array without fetching remote content. Sponsor logo requests return 404.",
         "operationId": "get_sponsors",
         "responses": {
           "200": {
@@ -5399,23 +5399,7 @@
                 "example": {
                   "success": true,
                   "obj": {
-                    "contact": "https://t.me/example",
-                    "sponsors": [
-                      {
-                        "enable": true,
-                        "from": "2026-10-01T00:00:00Z",
-                        "id": "acme-2026-10",
-                        "link": "https://acme.example/?utm_source=3x-ui",
-                        "logo": "/sponsors/logo/acme.png",
-                        "name": "Acme VPS",
-                        "slots": [
-                          ""
-                        ],
-                        "text": {},
-                        "title": {},
-                        "until": "2026-11-01T00:00:00Z"
-                      }
-                    ]
+                    "sponsors": []
                   }
                 }
               }

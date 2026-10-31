@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/mhsanaei/3x-ui/v3/internal/logger"
-	"github.com/mhsanaei/3x-ui/v3/internal/web/entity"
 	"github.com/mhsanaei/3x-ui/v3/internal/web/middleware"
 	"github.com/mhsanaei/3x-ui/v3/internal/web/service"
 	"github.com/mhsanaei/3x-ui/v3/internal/web/service/panel"
@@ -29,7 +28,6 @@ type IndexController struct {
 
 	settingService service.SettingService
 	userService    panel.UserService
-	panelService   panel.PanelService
 	tgbot          tgbot.Tgbot
 }
 
@@ -52,26 +50,15 @@ func (a *IndexController) initRouter(g *gin.RouterGroup) {
 	g.POST("/getTwoFactorEnable", middleware.CSRFMiddleware(getRemoteIp), a.getTwoFactorEnable)
 }
 
-// sponsors is public so the login page can render its slot; failures stay silent.
+// Keep the legacy endpoint empty so cached clients cannot load paid placements.
 func (a *IndexController) sponsors(c *gin.Context) {
-	list, err := a.panelService.GetSponsors()
-	if err != nil {
-		logger.Debug("sponsors fetch failed:", err)
-		c.JSON(http.StatusOK, entity.Msg{Success: false})
-		return
-	}
-	jsonObj(c, list, nil)
+	c.Header("Cache-Control", "no-store")
+	jsonObj(c, &panel.SponsorList{Sponsors: []panel.Sponsor{}}, nil)
 }
 
 func (a *IndexController) sponsorLogo(c *gin.Context) {
-	data, contentType, err := a.panelService.GetSponsorLogo(c.Param("name"))
-	if err != nil {
-		logger.Debug("sponsor logo failed:", err)
-		c.Status(http.StatusNotFound)
-		return
-	}
-	c.Header("Cache-Control", "public, max-age=3600")
-	c.Data(http.StatusOK, contentType, data)
+	c.Header("Cache-Control", "no-store")
+	c.Status(http.StatusNotFound)
 }
 
 // index handles the root route, redirecting logged-in users to the panel or showing the login page.
