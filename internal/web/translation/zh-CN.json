@@ -857,6 +857,7 @@
       "totalGB": "流量上限 (GB)",
       "totalGBDesc": "该客户端的流量配额。0 = 不限制。",
       "expiryTime": "过期时间",
+      "resetTrafficByExpiry": "每月按到期日重置流量（面板时区）",
       "extendExpiry1": "+1个月",
       "extendExpiry3": "+3个月",
       "extendExpiry6": "+半年",

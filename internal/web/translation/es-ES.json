@@ -844,6 +844,7 @@
       "totalGB": "Límite de tráfico (GB)",
       "totalGBDesc": "Cuota de datos para este cliente. 0 = ilimitado.",
       "expiryTime": "Expiración",
+      "resetTrafficByExpiry": "Restablecer el tráfico cada mes el día del vencimiento (zona horaria del panel)",
       "extendExpiry1": "+1 mes",
       "extendExpiry3": "+3 meses",
       "extendExpiry6": "+6 meses",

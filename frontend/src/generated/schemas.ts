@@ -1852,7 +1852,8 @@ export const SCHEMAS: Record<string, unknown> = {
           "hourly",
           "daily",
           "weekly",
-          "monthly"
+          "monthly",
+          "monthly_expiry"
         ],
         "type": "string"
       },

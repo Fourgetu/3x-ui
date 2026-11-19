@@ -1878,7 +1878,8 @@
               "hourly",
               "daily",
               "weekly",
-              "monthly"
+              "monthly",
+              "monthly_expiry"
             ],
             "type": "string"
           },

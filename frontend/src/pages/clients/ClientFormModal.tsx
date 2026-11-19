@@ -287,6 +287,7 @@ export default function ClientFormModal({
   const email = useWatch({ control: methods.control, name: 'email' });
   const uuid = useWatch({ control: methods.control, name: 'uuid' });
   const trafficReset = useWatch({ control: methods.control, name: 'trafficReset' });
+  const resetByExpiry = trafficReset === 'monthly_expiry';
   const password = useWatch({ control: methods.control, name: 'password' });
   const subId = useWatch({ control: methods.control, name: 'subId' });
   const limitHwid = useWatch({ control: methods.control, name: 'limitHwid' });
@@ -1132,9 +1133,11 @@ export default function ClientFormModal({
                               <DateTimePicker
                                 id={`${uid}-expiry`}
                                 value={expiryDayjs}
-                                onChange={(d) =>
-                                  methods.setValue('expiryDate', d ? d.valueOf() : 0)
-                                }
+                                onChange={(d) => {
+                                  methods.setValue('expiryDate', d ? d.valueOf() : 0);
+                                  if (!d && resetByExpiry)
+                                    methods.setValue('trafficReset', 'never');
+                                }}
                               />
                               <Space wrap size={[8, 8]} style={{ marginTop: 8 }}>
                                 {[1, 3, 6, 12].map((months) => (
@@ -1171,8 +1174,10 @@ export default function ClientFormModal({
                               checked={delayedStart}
                               onChange={(v) => {
                                 methods.setValue('delayedStart', v);
-                                if (v) methods.setValue('expiryDate', 0);
-                                else methods.setValue('delayedDays', 0);
+                                if (v) {
+                                  methods.setValue('expiryDate', 0);
+                                  if (resetByExpiry) methods.setValue('trafficReset', 'never');
+                                } else methods.setValue('delayedDays', 0);
                               }}
                             />
                           </Form.Item>
@@ -1181,18 +1186,37 @@ export default function ClientFormModal({
 
                       <Row gutter={16}>
                         <Col xs={24} md={12}>
-                          <FormField
-                            name="trafficReset"
-                            label={t('pages.inbounds.periodicTrafficResetTitle')}
+                          <Form.Item
+                            label={t('pages.clients.resetTrafficByExpiry')}
+                            htmlFor={`${uid}-reset-by-expiry`}
                           >
-                            <Select
-                              options={TRAFFIC_RESETS.map((r) => ({
-                                value: r,
-                                label: t(`pages.inbounds.periodicTrafficReset.${r}`),
-                              }))}
+                            <Switch
+                              id={`${uid}-reset-by-expiry`}
+                              checked={resetByExpiry}
+                              disabled={!resetByExpiry && (delayedStart || !expiryDate)}
+                              onChange={(v) =>
+                                methods.setValue('trafficReset', v ? 'monthly_expiry' : 'never', {
+                                  shouldDirty: true,
+                                })
+                              }
                             />
-                          </FormField>
+                          </Form.Item>
                         </Col>
+                        {!resetByExpiry && (
+                          <Col xs={24} md={12}>
+                            <FormField
+                              name="trafficReset"
+                              label={t('pages.inbounds.periodicTrafficResetTitle')}
+                            >
+                              <Select
+                                options={TRAFFIC_RESETS.map((r) => ({
+                                  value: r,
+                                  label: t(`pages.inbounds.periodicTrafficReset.${r}`),
+                                }))}
+                              />
+                            </FormField>
+                          </Col>
+                        )}
                         {trafficReset === 'monthly' && (
                           <Col xs={24} md={12}>
                             <FormField

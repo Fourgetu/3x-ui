@@ -54,9 +54,9 @@ func validateClientSubID(subID string) error {
 // a field that reads as configured while no job ever selects the client.
 func validateClientTrafficReset(period string, day int) error {
 	switch period {
-	case "", "never", "hourly", "daily", "weekly", "monthly":
+	case "", "never", "hourly", "daily", "weekly", "monthly", TrafficResetMonthlyExpiry:
 	default:
-		return common.NewError("client trafficReset must be never, hourly, daily, weekly or monthly, got:", period)
+		return common.NewError("unknown client trafficReset:", period)
 	}
 	if day < 0 || day > 31 {
 		return common.NewError("client trafficResetDay must be between 0 and 31, got:", day)
@@ -113,11 +113,16 @@ func normalizeClientTrafficReset(c *model.Client) {
 	c.TrafficResetDay = normalizeTrafficResetDay(c.TrafficResetDay)
 }
 
+// TrafficResetMonthlyExpiry uses the client's expiry day in the panel timezone.
+const TrafficResetMonthlyExpiry = "monthly_expiry"
+
 // ClientResetCycle is the slice of a client the reset job needs: enough to know
 // whether it is due, and whether its disable is the quota's doing or the operator's.
 type ClientResetCycle struct {
 	Email           string
 	TrafficResetDay int
+	TrafficReset    string
+	ExpiryTime      int64
 	Enable          bool
 	Total           int64
 	Used            int64
@@ -131,7 +136,7 @@ func (c ClientResetCycle) Depleted() bool {
 
 func clientResetCycles(tx *gorm.DB) *gorm.DB {
 	return tx.Table("clients c").
-		Select("c.email, c.traffic_reset_day, c.enable, COALESCE(ct.total, 0) AS total, COALESCE(ct.up, 0) + COALESCE(ct.down, 0) AS used").
+		Select("c.email, c.traffic_reset_day, c.traffic_reset, c.expiry_time, c.enable, COALESCE(ct.total, 0) AS total, COALESCE(ct.up, 0) + COALESCE(ct.down, 0) AS used").
 		Joins("LEFT JOIN client_traffics ct ON ct.email = c.email")
 }
 
@@ -139,9 +144,11 @@ func clientResetCycles(tx *gorm.DB) *gorm.DB {
 // period, independent of the cycle configured on the inbounds they belong to.
 func (s *ClientService) GetClientsByTrafficReset(period string) ([]ClientResetCycle, error) {
 	var cycles []ClientResetCycle
-	err := clientResetCycles(database.GetDB()).
-		Where("c.traffic_reset = ?", period).
-		Scan(&cycles).Error
+	periods := []string{period}
+	if period == "monthly" {
+		periods = append(periods, TrafficResetMonthlyExpiry)
+	}
+	err := clientResetCycles(database.GetDB()).Where("c.traffic_reset IN ?", periods).Scan(&cycles).Error
 	if err != nil {
 		return nil, err
 	}

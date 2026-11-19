@@ -844,6 +844,7 @@
       "totalGB": "Batas Trafik (GB)",
       "totalGBDesc": "Kuota data untuk klien ini. 0 = tidak terbatas.",
       "expiryTime": "Kedaluwarsa",
+      "resetTrafficByExpiry": "Reset trafik setiap bulan pada tanggal kedaluwarsa (zona waktu panel)",
       "extendExpiry1": "+1 bulan",
       "extendExpiry3": "+3 bulan",
       "extendExpiry6": "+6 bulan",

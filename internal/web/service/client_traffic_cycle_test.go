@@ -110,8 +110,22 @@ func TestClientEditChangesTheTrafficResetCycle(t *testing.T) {
 			rec.TrafficReset, rec.TrafficResetDay)
 	}
 
-	// Turning it off has to work too, and "never" is not an empty value.
 	edited = rec.ToClient()
+	edited.TrafficReset = TrafficResetMonthlyExpiry
+	edited.ExpiryTime = time.Date(2027, 1, 20, 12, 0, 0, 0, time.UTC).UnixMilli()
+	if _, err := svc.clientService.Update(svc, rec.Id, *edited, rec.LimitHwid); err != nil {
+		t.Fatalf("set expiry-linked cycle: %v", err)
+	}
+	// A subsequent edit of the expiry alone must move the scheduler's anchor.
+	edited.ExpiryTime = time.Date(2027, 4, 8, 12, 0, 0, 0, time.UTC).UnixMilli()
+	if _, err := svc.clientService.Update(svc, rec.Id, *edited, rec.LimitHwid); err != nil {
+		t.Fatalf("change expiry: %v", err)
+	}
+	cycles, err := svc.clientService.GetClientsByTrafficReset("monthly")
+	if err != nil || len(cycles) != 1 || cycles[0].TrafficReset != TrafficResetMonthlyExpiry || cycles[0].ExpiryTime != edited.ExpiryTime {
+		t.Fatalf("monthly job did not pick up edited expiry: %+v, %v", cycles, err)
+	}
+	// Turning it off has to work too, and "never" is not an empty value.
 	edited.TrafficReset = "never"
 	if _, err := svc.clientService.Update(svc, rec.Id, *edited, rec.LimitHwid); err != nil {
 		t.Fatalf("Update to never: %v", err)

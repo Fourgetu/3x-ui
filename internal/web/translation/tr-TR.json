@@ -844,6 +844,7 @@
       "totalGB": "Trafik Limiti (GB)",
       "totalGBDesc": "Bu kullanıcı için veri kotası. 0 = sınırsız.",
       "expiryTime": "Son Kullanma",
+      "resetTrafficByExpiry": "Trafiği her ay bitiş tarihinin gününde sıfırla (panel saat dilimi)",
       "extendExpiry1": "+1 ay",
       "extendExpiry3": "+3 ay",
       "extendExpiry6": "+6 ay",

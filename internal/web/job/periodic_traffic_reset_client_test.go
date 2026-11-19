@@ -27,6 +27,7 @@ type seededClient struct {
 	quotaEnable  bool
 	total        int64
 	inboundCycle string
+	expiry       int64
 }
 
 // seedClientOnCycle creates an inbound that never resets on its own, a client
@@ -38,7 +39,7 @@ func seedClientOnCycle(t *testing.T, port int, c seededClient) {
 
 	client := model.Client{
 		Email: c.email, ID: uuidFor(port), Enable: c.recordEnable,
-		TrafficReset: c.cycle, TrafficResetDay: c.day,
+		TrafficReset: c.cycle, TrafficResetDay: c.day, ExpiryTime: c.expiry,
 	}
 	settings, err := json.Marshal(map[string]any{"clients": []model.Client{client}})
 	if err != nil {
@@ -57,7 +58,7 @@ func seedClientOnCycle(t *testing.T, port int, c seededClient) {
 	}
 	rec := model.ClientRecord{
 		Email: c.email, UUID: client.ID, Enable: c.recordEnable,
-		TrafficReset: c.cycle, TrafficResetDay: c.day,
+		TrafficReset: c.cycle, TrafficResetDay: c.day, ExpiryTime: c.expiry,
 	}
 	if err := db.Create(&rec).Error; err != nil {
 		t.Fatalf("create client record: %v", err)
@@ -72,7 +73,7 @@ func seedClientOnCycle(t *testing.T, port int, c seededClient) {
 		t.Fatalf("link client to inbound: %v", err)
 	}
 	if err := db.Create(&xray.ClientTraffic{
-		InboundId: ib.Id, Email: c.email, Enable: c.quotaEnable, Up: 500, Down: 700, Total: c.total,
+		InboundId: ib.Id, Email: c.email, Enable: c.quotaEnable, Up: 500, Down: 700, Total: c.total, ExpiryTime: c.expiry,
 	}).Error; err != nil {
 		t.Fatalf("create traffic: %v", err)
 	}
@@ -100,6 +101,48 @@ func recordFor(t *testing.T, email string) model.ClientRecord {
 		t.Fatalf("read record for %s: %v", email, err)
 	}
 	return rec
+}
+
+func TestMonthlyTrafficFollowsEachClientsExpiry(t *testing.T) {
+	initResetJobDB(t)
+	loc := time.FixedZone("panel", 8*3600)
+	at := func(month time.Month, day int) time.Time { return time.Date(2027, month, day, 0, 0, 0, 0, loc) }
+	a, b := "twentieth@example.com", "monthend@example.com"
+	expiryA, expiryB := at(time.March, 20).UnixMilli(), at(time.March, 31).UnixMilli()
+	seedClientOnCycle(t, 41300, seededClient{email: a, cycle: "monthly_expiry", recordEnable: true, quotaEnable: true, expiry: expiryA, total: 4000})
+	seedClientOnCycle(t, 41301, seededClient{email: b, cycle: "monthly_expiry", recordEnable: true, quotaEnable: true, expiry: expiryB, total: 4000})
+	job := NewPeriodicTrafficResetJob("monthly", loc)
+	// Restore usage between ticks so each assertion observes that tick alone.
+	for _, tc := range []struct {
+		tick           time.Time
+		resetA, resetB bool
+	}{
+		{at(time.January, 20), true, false},
+		{at(time.February, 20), true, false},
+		{at(time.February, 27), false, false},
+		{at(time.February, 28), false, true},
+		{at(time.March, 20), false, false},
+		{at(time.April, 30), false, false},
+	} {
+		if err := database.GetDB().Model(&xray.ClientTraffic{}).Where("email IN ?", []string{a, b}).Updates(map[string]any{"up": 500, "down": 700}).Error; err != nil {
+			t.Fatal(err)
+		}
+		job.resetClientsOnTheirOwnCycle(tc.tick)
+		for _, user := range []struct {
+			email  string
+			expiry int64
+			reset  bool
+		}{{a, expiryA, tc.resetA}, {b, expiryB, tc.resetB}} {
+			row := trafficFor(t, user.email)
+			up, down := int64(500), int64(700)
+			if user.reset {
+				up, down = 0, 0
+			}
+			if row.Up != up || row.Down != down || row.Total != 4000 || row.ExpiryTime != user.expiry {
+				t.Fatalf("%v: %s up/down/total/expiry = %d/%d/%d/%d", tc.tick, user.email, row.Up, row.Down, row.Total, row.ExpiryTime)
+			}
+		}
+	}
 }
 
 func TestPeriodicTrafficResetClients(t *testing.T) {

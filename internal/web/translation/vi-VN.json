@@ -844,6 +844,7 @@
       "totalGB": "Giới hạn lưu lượng (GB)",
       "totalGBDesc": "Hạn mức dữ liệu cho khách hàng này. 0 = không giới hạn.",
       "expiryTime": "Hết hạn",
+      "resetTrafficByExpiry": "Đặt lại lưu lượng hằng tháng vào ngày hết hạn (múi giờ bảng điều khiển)",
       "extendExpiry1": "+1 tháng",
       "extendExpiry3": "+3 tháng",
       "extendExpiry6": "+6 tháng",

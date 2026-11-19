@@ -1063,6 +1063,7 @@
         "inbound": "Inbound",
         "standalone": "Standalone"
       },
+      "resetTrafficByExpiry": "Vynulovať prenos každý mesiac v deň skončenia platnosti (časové pásmo panela)",
       "extendExpiry1": "+1 month",
       "extendExpiry3": "+3 months",
       "extendExpiry6": "+6 months",

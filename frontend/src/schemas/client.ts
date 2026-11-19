@@ -363,7 +363,7 @@ export const ClientFormSchema = z.object({
   resetDay: z.number().int().min(0).max(31),
   resetWeekday: z.number().int().min(0).max(7),
   resetMax: z.number().int().min(0),
-  trafficReset: z.enum(['never', 'hourly', 'daily', 'weekly', 'monthly']),
+  trafficReset: z.enum(['never', 'hourly', 'daily', 'weekly', 'monthly', 'monthly_expiry']),
   trafficResetDay: z.number().int().min(1).max(31),
   limitIp: z.number().int().min(0),
   limitHwid: z.number().int().min(0),

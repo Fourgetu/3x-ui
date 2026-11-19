@@ -8,7 +8,7 @@ import { renderWithProviders } from './test-utils';
 
 const NOW = dayjs('2026-10-23T12:34:56').valueOf();
 
-function renderClient(expiryTime: number) {
+function renderClient(expiryTime: number, trafficReset = 'never') {
   vi.spyOn(Date, 'now').mockReturnValue(NOW);
   const save = vi.fn().mockResolvedValue({ success: true });
   const onOpenChange = vi.fn();
@@ -22,6 +22,7 @@ function renderClient(expiryTime: number) {
           uuid: '11111111-1111-1111-1111-111111111111',
           subId: 'expiry-test-sub',
           expiryTime,
+          trafficReset,
           enable: true,
         } as ClientRecord
       }
@@ -36,6 +37,36 @@ function renderClient(expiryTime: number) {
 afterEach(() => vi.mocked(Date.now).mockRestore());
 
 describe('client expiry shortcuts', () => {
+  it('saves an expiry-linked traffic cycle alongside a three-month extension', async () => {
+    const { save } = renderClient(dayjs('2026-11-20T12:00:00').valueOf());
+    fireEvent.click(await screen.findByRole('button', { name: '+3 months' }));
+    fireEvent.click(
+      screen.getByRole('switch', { name: /reset traffic monthly on the expiry day/i }),
+    );
+    expect(save).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0]).toMatchObject({
+      expiryTime: dayjs('2027-02-20T12:00:00').valueOf(),
+      trafficReset: 'monthly_expiry',
+      reset: 0,
+      resetDay: 0,
+    });
+  });
+
+  it('can turn off a saved expiry-linked cycle without changing expiry', async () => {
+    const expiry = dayjs('2027-01-08T12:00:00').valueOf();
+    const { save } = renderClient(expiry, 'monthly_expiry');
+    const toggle = await screen.findByRole('switch', {
+      name: /reset traffic monthly on the expiry day/i,
+    });
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0]).toMatchObject({ expiryTime: expiry, trafficReset: 'never' });
+  });
+
   it.each([
     ['+1 month', '2026-12-25T08:09:10'],
     ['+3 months', '2027-02-25T08:09:10'],

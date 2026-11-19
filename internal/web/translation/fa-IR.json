@@ -844,6 +844,7 @@
       "totalGB": "سقف حجم (گیگابایت)",
       "totalGBDesc": "سهمیه‌ی حجم مصرفی کلاینت. ۰ = نامحدود",
       "expiryTime": "انقضا",
+      "resetTrafficByExpiry": "بازنشانی ماهانه ترافیک در روز انقضا (منطقه زمانی پنل)",
       "extendExpiry1": "+۱ ماه",
       "extendExpiry3": "+۳ ماه",
       "extendExpiry6": "+۶ ماه",

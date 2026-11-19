@@ -69,7 +69,7 @@ func forEachResetBounded(n int, reset func(i int)) {
 // period, then for the clients carrying that period on their own (#5497).
 func (j *PeriodicTrafficResetJob) Run() {
 	j.resetInboundsOnSchedule()
-	j.resetClientsOnTheirOwnCycle()
+	j.resetClientsOnTheirOwnCycle(time.Now().In(j.location))
 }
 
 func (j *PeriodicTrafficResetJob) resetInboundsOnSchedule() {
@@ -137,19 +137,26 @@ func (j *PeriodicTrafficResetJob) resetInboundsOnSchedule() {
 
 // resetClientsOnTheirOwnCycle resets clients whose cycle is set individually. A
 // client inside an inbound on the same cycle is reset twice, which is harmless.
-func (j *PeriodicTrafficResetJob) resetClientsOnTheirOwnCycle() {
+func (j *PeriodicTrafficResetJob) resetClientsOnTheirOwnCycle(now time.Time) {
 	cycles, err := j.clientService.GetClientsByTrafficReset(string(j.period))
 	if err != nil {
 		logger.Warning("Failed to get clients for traffic reset:", err)
 		return
 	}
 
-	now := time.Now().In(j.location)
 	due := make([]service.ClientResetCycle, 0, len(cycles))
 	for _, c := range cycles {
 		// Monthly clients come due on their own day, the rule the inbound-level
 		// schedule already follows.
-		if j.period == "monthly" && !monthlyResetDue(c.TrafficResetDay, now) {
+		day := c.TrafficResetDay
+		if c.TrafficReset == service.TrafficResetMonthlyExpiry {
+			// Never reset an expired account or one without an absolute expiry.
+			if c.ExpiryTime <= now.UnixMilli() {
+				continue
+			}
+			day = time.UnixMilli(c.ExpiryTime).In(now.Location()).Day()
+		}
+		if j.period == "monthly" && !monthlyResetDue(day, now) {
 			continue
 		}
 		// A reset re-enables, which is right for a client the quota switched off
